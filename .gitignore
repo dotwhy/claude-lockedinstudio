@@ -1,0 +1,10 @@
+.env
+credentials.json
+token.json
+*.db
+*.db-wal
+*.db-shm
+candidates.csv
+__pycache__/
+*.pyc
+.venv/
