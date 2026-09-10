@@ -12,6 +12,8 @@ import config
 #   completed   -> all steps sent, no reply
 #   replied     -> they answered; needs classification / your attention
 #   interested  -> classifier flagged a positive/question reply (in review queue)
+#   parked      -> already opened once, long-loop re-touch later
+#   hold        -> manual / in-progress, machine doesn't touch
 #   not_interested / unsubscribed / bounced -> terminal, never contacted again
 TERMINAL = ("not_interested", "unsubscribed", "bounced", "interested")
 
@@ -47,6 +49,10 @@ def init():
             references_chain  TEXT DEFAULT '',
             last_sent_at      TEXT,
             source            TEXT,
+            profile_url       TEXT,
+            platform          TEXT,
+            language          TEXT,
+            contact_method    TEXT,
             created_at        TEXT,
             updated_at        TEXT
         );
@@ -92,13 +98,21 @@ def init():
         );
         """
     )
+    for col, typ in [("profile_url", "TEXT"), ("platform", "TEXT"),
+                     ("language", "TEXT"), ("contact_method", "TEXT")]:
+        try:
+            conn.execute(f"ALTER TABLE prospects ADD COLUMN {col} {typ}")
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
     conn.close()
 
 
 # --- prospects --------------------------------------------------------------
 def upsert_prospect(channel_id=None, channel_name=None, first_name=None, email=None,
-                    subscriber_count=None, latest_video=None, source="import"):
+                    subscriber_count=None, latest_video=None, source="import",
+                    status="new", profile_url=None, platform=None,
+                    language=None, contact_method=None):
     """Insert a prospect. Skips silently if the email is already known or
     suppressed. Returns True if a new row was created."""
     if not email:
@@ -116,10 +130,12 @@ def upsert_prospect(channel_id=None, channel_name=None, first_name=None, email=N
         conn.execute(
             """INSERT INTO prospects
                (channel_id, channel_name, first_name, email, subscriber_count,
-                latest_video, source, status, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?, 'new', ?, ?)""",
+                latest_video, source, status, profile_url, platform, language,
+                contact_method, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (channel_id, channel_name, first_name, email, subscriber_count,
-             latest_video, source, _now(), _now()),
+             latest_video, source, status, profile_url, platform, language,
+             contact_method, _now(), _now()),
         )
         conn.commit()
         return True

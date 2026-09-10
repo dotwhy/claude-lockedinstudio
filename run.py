@@ -97,6 +97,16 @@ def cmd_drafts():
     drafts.build_all()
 
 
+def cmd_import_sheet(path):
+    import import_sheet
+    db.init()
+    counts = import_sheet.load(path)
+    print(f"Sheet import: {counts}")
+    for email in import_sheet.KNOWN_BOUNCED:
+        db.suppress(email, "hard bounce (August run)")
+    print(f"Suppressed {len(import_sheet.KNOWN_BOUNCED)} known-bounced addresses.")
+
+
 def cmd_tick():
     import personalize
     import engine
@@ -116,11 +126,11 @@ def cmd_stats():
 
 
 COMMANDS = {
-    "init": cmd_init, "import": cmd_import, "source": cmd_source,
-    "personalize": cmd_personalize, "send": cmd_send, "replies": cmd_replies,
-    "digest": cmd_digest, "tick": cmd_tick, "stats": cmd_stats,
-    "content": cmd_content, "enrich": cmd_enrich, "snapshot": cmd_snapshot,
-    "drafts": cmd_drafts,
+    "init": cmd_init, "import": cmd_import, "import-sheet": cmd_import_sheet,
+    "source": cmd_source, "personalize": cmd_personalize, "send": cmd_send,
+    "replies": cmd_replies, "digest": cmd_digest, "tick": cmd_tick,
+    "stats": cmd_stats, "content": cmd_content, "enrich": cmd_enrich,
+    "snapshot": cmd_snapshot, "drafts": cmd_drafts,
 }
 
 
@@ -129,11 +139,11 @@ def main():
         print(__doc__)
         sys.exit(1)
     cmd = sys.argv[1]
-    if cmd == "import":
+    if cmd in ("import", "import-sheet"):
         if len(sys.argv) < 3:
-            print("Usage: python run.py import <file.csv>")
+            print(f"Usage: python run.py {cmd} <file.csv>")
             sys.exit(1)
-        cmd_import(sys.argv[2])
+        COMMANDS[cmd](sys.argv[2])
     else:
         COMMANDS[cmd]()
 
