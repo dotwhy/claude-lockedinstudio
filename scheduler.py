@@ -66,6 +66,11 @@ def main():
     sched.add_job(safe(youtube_sourcing.snapshot_all, "snapshot"),
                   CronTrigger(day_of_week="mon", hour=7, minute=0), name="snapshot")
 
+    # Long loop: re-touch parked prospects whose ~90-day wait is up. Runs the
+    # normal (non-force) pass; the one-time re-enroll is `run.py retouch --now`.
+    sched.add_job(safe(engine.retouch_due, "retouch"),
+                  CronTrigger(day_of_week="tue", hour=9, minute=0), name="retouch")
+
     log.info("Scheduler started. Jobs:")
     for j in sched.get_jobs():
         log.info(f"  {j.name}: {j.trigger}")

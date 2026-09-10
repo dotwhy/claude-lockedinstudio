@@ -55,15 +55,15 @@ def send(to, subject, body, thread_id=None, in_reply_to=None, references=None):
     """Send an email. If thread_id/in_reply_to are given, it threads as a reply.
     Returns (gmail_message_id, thread_id, our_message_id_header).
     Honors DRY_RUN: prints and returns fake ids without touching the network."""
-    message_id = make_msgid(domain=address().split("@")[-1])
-
     if config.DRY_RUN:
         print("\n----- [DRY_RUN] would send -----")
         print(f"To: {to}")
         print(f"Subject: {subject or '(reply, keeps thread subject)'}")
         print(body)
         print("--------------------------------\n")
-        return ("dry-run", thread_id or "dry-run-thread", message_id)
+        return ("dry-run", thread_id or "dry-run-thread", make_msgid(domain="dry-run.local"))
+
+    message_id = make_msgid(domain=address().split("@")[-1])
 
     msg = EmailMessage()
     msg["To"] = to

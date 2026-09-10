@@ -4,6 +4,9 @@
 Usage:
     python run.py init                 # create the database
     python run.py import prospects.csv # load prospects (columns: email, channel_name, [first_name, subscriber_count, latest_video])
+    python run.py load sheet.csv       # load your streamer sheet (Account Name, Email, Status, URL, Contact method, language)
+    python run.py retouch --now        # one-time: re-enroll ALL parked prospects into the long-loop opener now
+    python run.py retouch              # long-loop pass: re-touch only parked prospects whose ~90-day wait is up
     python run.py source               # discover new candidates via YouTube (writes candidates.csv for enrichment)
     python run.py personalize          # generate a custom opening line for each new prospect
     python run.py send                 # send openers + due follow-ups (respects DRY_RUN + daily cap)
@@ -97,14 +100,21 @@ def cmd_drafts():
     drafts.build_all()
 
 
-def cmd_import_sheet(path):
+def cmd_load(path):
     import import_sheet
     db.init()
     counts = import_sheet.load(path)
-    print(f"Sheet import: {counts}")
-    for email in import_sheet.KNOWN_BOUNCED:
-        db.suppress(email, "hard bounce (August run)")
-    print(f"Suppressed {len(import_sheet.KNOWN_BOUNCED)} known-bounced addresses.")
+    print(f"Loaded sheet: {counts}")
+    print("  new    = will get the opener")
+    print("  parked = already contacted; waits for long-loop re-touch")
+    print("  hold   = manual / in contact / info-gathering; machine won't email")
+    print("  skipped= no email or non-email channel")
+
+
+def cmd_retouch(force=False):
+    import engine
+    db.init()
+    engine.retouch_due(force=force)
 
 
 def cmd_tick():
@@ -126,11 +136,11 @@ def cmd_stats():
 
 
 COMMANDS = {
-    "init": cmd_init, "import": cmd_import, "import-sheet": cmd_import_sheet,
-    "source": cmd_source, "personalize": cmd_personalize, "send": cmd_send,
-    "replies": cmd_replies, "digest": cmd_digest, "tick": cmd_tick,
-    "stats": cmd_stats, "content": cmd_content, "enrich": cmd_enrich,
-    "snapshot": cmd_snapshot, "drafts": cmd_drafts,
+    "init": cmd_init, "import": cmd_import, "source": cmd_source,
+    "personalize": cmd_personalize, "send": cmd_send, "replies": cmd_replies,
+    "digest": cmd_digest, "tick": cmd_tick, "stats": cmd_stats,
+    "content": cmd_content, "enrich": cmd_enrich, "snapshot": cmd_snapshot,
+    "drafts": cmd_drafts, "load": cmd_load, "retouch": cmd_retouch,
 }
 
 
@@ -139,11 +149,14 @@ def main():
         print(__doc__)
         sys.exit(1)
     cmd = sys.argv[1]
-    if cmd in ("import", "import-sheet"):
+    if cmd in ("import", "load"):
         if len(sys.argv) < 3:
             print(f"Usage: python run.py {cmd} <file.csv>")
             sys.exit(1)
-        COMMANDS[cmd](sys.argv[2])
+        (cmd_import if cmd == "import" else cmd_load)(sys.argv[2])
+    elif cmd == "retouch":
+        # `retouch --now` re-enrolls all parked prospects immediately.
+        cmd_retouch(force="--now" in sys.argv)
     else:
         COMMANDS[cmd]()
 

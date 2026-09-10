@@ -110,3 +110,23 @@ def followup_2(first_name, channel_name, line):
 
 # step number (1-indexed) -> template function
 STEP_TEMPLATES = {1: opener, 2: followup_1, 3: followup_2}
+
+
+# --- long-loop re-touch -----------------------------------------------------
+# Sent to prospects who got the first sequence months ago and never replied.
+# Deliberately short and more personal than the original opener.
+RETOUCH_WAIT_DAYS = 90  # ~3 months before a parked prospect is re-touched
+
+def retouch(first_name, channel_name, line):
+    subject = f"{first_name} — still building?"
+    personal = f"{line}\n\n" if line else ""
+    body = (
+        f"Hey {first_name},\n\n"
+        f"{personal}"
+        "Reached out a while back about building you a Roblox game — circling "
+        "back now we've shipped a few more. If owning your own is on your radar, "
+        "worth a quick look? No stress if not.\n\n"
+        f"{FROM_NAME}, {STUDIO_NAME}\n"
+        "Reply 'unsubscribe' to opt out."
+    )
+    return subject, body

@@ -1,7 +1,7 @@
 """SQLite persistence layer. One file, no server, easy to inspect with any
 SQLite browser. All state the autonomous loop needs lives here."""
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import config
 
@@ -12,8 +12,6 @@ import config
 #   completed   -> all steps sent, no reply
 #   replied     -> they answered; needs classification / your attention
 #   interested  -> classifier flagged a positive/question reply (in review queue)
-#   parked      -> already opened once, long-loop re-touch later
-#   hold        -> manual / in-progress, machine doesn't touch
 #   not_interested / unsubscribed / bounced -> terminal, never contacted again
 TERMINAL = ("not_interested", "unsubscribed", "bounced", "interested")
 
@@ -42,6 +40,10 @@ def init():
             subscriber_count  INTEGER,
             latest_video      TEXT,
             personalized_line TEXT,
+            profile_url       TEXT,
+            platform          TEXT,
+            language          TEXT,
+            contact_method    TEXT,
             status            TEXT DEFAULT 'new',
             step              INTEGER DEFAULT 0,
             gmail_thread_id   TEXT,
@@ -49,10 +51,6 @@ def init():
             references_chain  TEXT DEFAULT '',
             last_sent_at      TEXT,
             source            TEXT,
-            profile_url       TEXT,
-            platform          TEXT,
-            language          TEXT,
-            contact_method    TEXT,
             created_at        TEXT,
             updated_at        TEXT
         );
@@ -111,8 +109,8 @@ def init():
 # --- prospects --------------------------------------------------------------
 def upsert_prospect(channel_id=None, channel_name=None, first_name=None, email=None,
                     subscriber_count=None, latest_video=None, source="import",
-                    status="new", profile_url=None, platform=None,
-                    language=None, contact_method=None):
+                    status="new", profile_url=None, platform=None, language=None,
+                    contact_method=None):
     """Insert a prospect. Skips silently if the email is already known or
     suppressed. Returns True if a new row was created."""
     if not email:
@@ -160,14 +158,50 @@ def prospects_needing_line():
 
 
 def active_prospects():
-    """Everyone the reply-checker should watch: opener sent, not terminal."""
+    """Everyone the reply-checker should watch: any thread we've sent on that
+    isn't terminal — includes parked prospects we've re-touched."""
     conn = connect()
     rows = conn.execute(
-        "SELECT * FROM prospects WHERE status IN ('active','completed') "
+        "SELECT * FROM prospects WHERE status IN ('active','completed','parked') "
         "AND gmail_thread_id IS NOT NULL"
     ).fetchall()
     conn.close()
     return rows
+
+
+def parked_due(wait_days, force=False):
+    """Parked prospects due for a long-loop re-touch. force=True returns all of
+    them (used for the one-time re-enroll); otherwise only those whose last
+    contact (or import, if never contacted by us) is older than wait_days."""
+    conn = connect()
+    if force:
+        rows = conn.execute("SELECT * FROM prospects WHERE status='parked'").fetchall()
+    else:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=wait_days)).isoformat()
+        rows = conn.execute(
+            "SELECT * FROM prospects WHERE status='parked' "
+            "AND COALESCE(last_sent_at, created_at) <= ?", (cutoff,)
+        ).fetchall()
+    conn.close()
+    return rows
+
+
+def record_retouch(prospect, subject, body, gmail_message_id, thread_id, message_id_header):
+    """Log a re-touch send. Status stays 'parked' so the prospect keeps cycling
+    through the long loop until they reply."""
+    conn = connect()
+    conn.execute(
+        """UPDATE prospects SET gmail_thread_id=?, last_message_id=?,
+           last_sent_at=?, updated_at=? WHERE id=?""",
+        (thread_id, message_id_header, _now(), _now(), prospect["id"]),
+    )
+    conn.execute(
+        """INSERT INTO messages (prospect_id, direction, step, subject, body,
+           gmail_message_id, created_at) VALUES (?, 'out', NULL, ?, ?, ?, ?)""",
+        (prospect["id"], subject, body, gmail_message_id, _now()),
+    )
+    conn.commit()
+    conn.close()
 
 
 def set_line(prospect_id, line):

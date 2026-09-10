@@ -1,19 +1,25 @@
-"""Prospect discovery via the YouTube Data API v3.
+"""Prospect discovery + email discovery via the YouTube Data API v3.
 
-IMPORTANT — the email gap:
-YouTube's API does NOT expose channel contact emails. A creator's business
-email sits on their About page behind a captcha ("I'm not a robot") reveal,
-and bypassing that is off the table. So this module discovers and ranks
-*candidates* (channel, subs, latest video) and stores them with a blank email.
-Fill the email in one of two ways:
-  1. Export these rows, enrich them in Apollo/Clay, re-import via `run.py import`.
-  2. Implement `enrich_email()` below against whatever provider you use.
-Rows without an email are simply never contacted.
+Where creator emails actually come from (NOT Apollo — that's a B2B corporate
+database with no creators in it): creators publish a business email in their own
+public text — the channel About description and their recent video descriptions
+("Business enquiries: name@gmail.com"). The API returns that text, so we regex
+the email straight out of it. No third-party enrichment, no captcha.
+
+The one email we do NOT touch is the separate "View email address" button on the
+About page — that's captcha-gated on purpose and off limits. We don't need it;
+most creators also paste the same address into their descriptions.
 """
+import re
+
 from googleapiclient.discovery import build
 
 import config
 import db
+
+# Matches a plain email in free text; skips obvious noise later.
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+_SKIP = ("example.com", "youtube.com", "sentry", "noreply", ".png", ".jpg")
 
 
 def _client():
@@ -22,10 +28,28 @@ def _client():
     return build("youtube", "v3", developerKey=config.YOUTUBE_API_KEY, cache_discovery=False)
 
 
-def enrich_email(channel):
-    """Plug your email-enrichment provider in here (Apollo/Clay/etc.).
-    Return an email string or None. Left unimplemented on purpose."""
+def _pick_email(*texts):
+    """Return the first plausible business email found across the given texts."""
+    for t in texts:
+        if not t:
+            continue
+        for m in _EMAIL_RE.findall(t):
+            low = m.lower()
+            if not any(s in low for s in _SKIP):
+                return low
     return None
+
+
+def extract_email(channel_id, channel_description="", latest_video_ids=None):
+    """Pull a business email from the channel description + recent video
+    descriptions. Returns an email or None."""
+    yt = _client()
+    texts = [channel_description]
+    ids = latest_video_ids or []
+    if ids:
+        vids = yt.videos().list(id=",".join(ids[:5]), part="snippet").execute()
+        texts += [v["snippet"].get("description", "") for v in vids.get("items", [])]
+    return _pick_email(*texts)
 
 
 def discover(max_per_term=25):
@@ -56,15 +80,18 @@ def discover(max_per_term=25):
             name = ch["snippet"]["title"]
             uploads = ch["contentDetails"]["relatedPlaylists"].get("uploads")
             latest = None
+            video_ids = []
             if uploads:
                 pl = yt.playlistItems().list(
-                    playlistId=uploads, part="snippet", maxResults=1
+                    playlistId=uploads, part="snippet", maxResults=5
                 ).execute()
                 items = pl.get("items", [])
                 if items:
                     latest = items[0]["snippet"]["title"]
+                    video_ids = [it["snippet"]["resourceId"]["videoId"] for it in items]
 
-            email = enrich_email(ch)  # returns None unless you wire a provider
+            # Email from the channel's own public text — no Apollo, no captcha.
+            email = extract_email(ch["id"], ch["snippet"].get("description", ""), video_ids)
             created = db.upsert_prospect(
                 channel_id=ch["id"], channel_name=name, email=email,
                 subscriber_count=subs, latest_video=latest, source="youtube",

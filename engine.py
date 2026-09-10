@@ -126,3 +126,31 @@ def send_digest():
     gmail_client.send(to=gmail_client.address(), subject="Outreach: replies to review", body=body)
     print(f"Digest of {len(rows)} reply(ies) sent to yourself.")
     return len(rows)
+
+
+def retouch_due(force=False):
+    """Long-loop re-touch: send the concise new opener to parked prospects that
+    are due (or all of them, if force=True for a one-time re-enroll). They stay
+    'parked' and keep cycling every RETOUCH_WAIT_DAYS until they reply."""
+    budget = config.MAX_SENDS_PER_DAY - db.sends_today()
+    if budget <= 0:
+        print(f"Daily cap reached ({config.MAX_SENDS_PER_DAY}). No re-touch sent.")
+        return 0
+
+    due = db.parked_due(config.RETOUCH_WAIT_DAYS, force=force)
+    sent = 0
+    for p in due:
+        if sent >= budget:
+            print(f"Hit daily cap ({config.MAX_SENDS_PER_DAY}). Remaining re-touches wait for tomorrow.")
+            break
+        if db.is_suppressed(p["email"]):
+            db.set_status(p["id"], "unsubscribed")
+            continue
+        subject, body = config.retouch(p["first_name"], p["channel_name"], p["personalized_line"] or "")
+        gmail_id, thread_id, msg_id = gmail_client.send(to=p["email"], subject=subject, body=body)
+        db.record_retouch(p, subject, body, gmail_id, thread_id, msg_id)
+        sent += 1
+        print(f"  [re-touch] {p['channel_name']} <{p['email']}>")
+
+    print(f"Re-touched {sent} parked prospect(s). {db.sends_today()}/{config.MAX_SENDS_PER_DAY} used today.")
+    return sent
