@@ -13,6 +13,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import config
 import db
+import import_sheet
 import youtube_sourcing
 
 
@@ -45,6 +46,8 @@ class Handler(BaseHTTPRequestHandler):
             _json_response(self, 404, {"error": "not found"})
 
     def do_POST(self):
+        if self.path == "/import":
+            return self._handle_import()
         if self.path != "/add":
             _json_response(self, 404, {"error": "not found"})
             return
@@ -104,6 +107,27 @@ class Handler(BaseHTTPRequestHandler):
             "channel": channel_name,
             "subs": subs,
         })
+
+
+    def _handle_import(self):
+        """Accept CSV text in the request body and run import_sheet.load() on it."""
+        import tempfile, os
+        length = int(self.headers.get("Content-Length", 0))
+        if not length:
+            _json_response(self, 400, {"error": "send CSV text as the request body"})
+            return
+        csv_data = self.rfile.read(length)
+        db.init()
+        tmp = tempfile.NamedTemporaryFile(mode="wb", suffix=".csv", delete=False)
+        tmp.write(csv_data)
+        tmp.close()
+        try:
+            counts = import_sheet.load(tmp.name)
+            _json_response(self, 200, {"imported": counts})
+        except Exception as e:
+            _json_response(self, 500, {"error": str(e)})
+        finally:
+            os.unlink(tmp.name)
 
 
 def start(port=None):
