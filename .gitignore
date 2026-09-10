@@ -5,6 +5,7 @@ token.json
 *.db-wal
 *.db-shm
 candidates.csv
+streamer_outreach.csv
 __pycache__/
 *.pyc
 .venv/
