@@ -39,8 +39,13 @@ def main():
     import personalize
     import content
     import youtube_sourcing
+    import api
 
     db.init()
+
+    port = api.start()
+    log.info(f"API listening on port {port}")
+
     sched = BlockingScheduler(timezone="UTC")
 
     # Outreach loop: personalize new prospects, send due steps, process replies.
