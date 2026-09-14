@@ -292,3 +292,56 @@ def test_discovery_progress_counts_the_candidate_funnel(db):
 def test_discovery_progress_counts_snapshot_days(db):
     db.record_snapshot("UC1", "A", 100, 1, 1, None)
     assert db.discovery_progress()["snapshot_days"] == 1
+
+
+# --- removing someone permanently -------------------------------------------
+def test_find_people_matches_name_and_email(db):
+    db.upsert_prospect(channel_name="Nuno", email="nuno@mgmt.com", source="sheet")
+    p, c = db.find_people("nuno")
+    assert len(p) == 1
+    p, c = db.find_people("MGMT.com")
+    assert len(p) == 1
+
+
+def test_find_people_is_case_insensitive_and_partial(db):
+    db.upsert_prospect(channel_name="AvocadoGaming", email="a@x.com", source="sheet")
+    assert len(db.find_people("avocado")[0]) == 1
+    assert len(db.find_people("AVOCADO")[0]) == 1
+
+
+def test_remove_suppresses_so_discovery_cannot_re_add(db):
+    # Deleting the row would let them straight back in next time discovery
+    # found the channel. Suppression is checked on every intake path.
+    db.upsert_prospect(channel_name="Nuno", email="nuno@mgmt.com", source="sheet")
+    removed = db.remove_person("nuno")
+
+    assert len(removed) == 1
+    assert db.is_suppressed("nuno@mgmt.com")
+    assert db.upsert_prospect(channel_name="Nuno", email="nuno@mgmt.com",
+                              source="discovery") is False
+
+
+def test_removed_prospect_is_not_sent_to(db):
+    db.upsert_prospect(channel_name="Nuno", email="nuno@mgmt.com",
+                       status="parked", source="sheet")
+    db.remove_person("nuno")
+    assert db.parked_due(90, force=True) == []
+    assert db.prospects_needing_line() == []
+
+
+def test_remove_covers_candidates_too(db):
+    db.upsert_candidate("UC1", "Nuno", 80_000)
+    db.set_candidate_growth("UC1", "growing", 9.0)
+    db.remove_person("nuno")
+    assert db.candidates_needing_email() == []
+    assert db.candidates_to_promote() == []
+
+
+def test_remove_handles_a_candidate_with_no_email(db):
+    db.upsert_candidate("UC1", "Nuno", 80_000)
+    removed = db.remove_person("nuno")
+    assert len(removed) == 1
+
+
+def test_remove_matching_nothing_is_harmless(db):
+    assert db.remove_person("nobody-by-that-name") == []

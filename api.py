@@ -68,6 +68,8 @@ class Handler(BaseHTTPRequestHandler):
             })
         elif self.path.startswith("/preview"):
             self._handle_preview()
+        elif self.path.startswith("/who"):
+            self._handle_who()
         else:
             _json_response(self, 404, {"error": "not found"})
 
@@ -79,6 +81,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_import()
         if self.path.startswith("/run/"):
             return self._handle_run(self.path[len("/run/"):])
+        if self.path == "/remove":
+            return self._handle_remove()
         if self.path != "/add":
             _json_response(self, 404, {"error": "not found"})
             return
@@ -179,6 +183,38 @@ class Handler(BaseHTTPRequestHandler):
                 "body": body,
             })
         _json_response(self, 200, {"dry_run": cfg.DRY_RUN, "previews": previews})
+
+    def _handle_who(self):
+        """GET /who?q=nuno — who matches, and are we about to email them."""
+        from urllib.parse import parse_qs, urlparse
+        term = parse_qs(urlparse(self.path).query).get("q", [""])[0]
+        if not term.strip():
+            _json_response(self, 400, {"error": "pass ?q=<name or email>"})
+            return
+        db.init()
+        prospects, candidates = db.find_people(term)
+        _json_response(self, 200, {
+            "query": term,
+            "prospects": [dict(r) for r in prospects],
+            "candidates": [dict(r) for r in candidates],
+        })
+
+    def _handle_remove(self):
+        """POST /remove {"q": "nuno"} — take someone out permanently.
+
+        Suppresses rather than deletes, so discovery can't quietly re-add them
+        the next time it finds their channel.
+        """
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length)) if length else {}
+        term = (body.get("q") or body.get("channel") or body.get("email") or "").strip()
+        if not term:
+            _json_response(self, 400, {"error": "pass 'q' (name or email)"})
+            return
+        db.init()
+        removed = db.remove_person(term, body.get("reason") or "manually removed")
+        _json_response(self, 200, {"query": term, "removed": removed,
+                                   "count": len(removed)})
 
     def _handle_run(self, job):
         """Trigger a scheduled job on demand: POST /run/<job>.

@@ -762,6 +762,74 @@ def discovery_progress():
     }
 
 
+def find_people(term):
+    """Search prospects AND candidates by channel name or email.
+
+    Used to answer "who is this and are we about to email them" before pulling
+    someone out of the pipeline.
+    """
+    like = f"%{(term or '').strip().lower()}%"
+    conn = connect()
+    prospects = conn.execute(
+        "SELECT id, channel_name, email, status, step, platform, profile_url "
+        "FROM prospects WHERE lower(channel_name) LIKE ? OR lower(email) LIKE ?",
+        (like, like),
+    ).fetchall()
+    candidates = conn.execute(
+        "SELECT id, channel_name, email, growth_signal, fast_track, profile_url "
+        "FROM candidates WHERE lower(channel_name) LIKE ? OR lower(COALESCE(email,'')) LIKE ?",
+        (like, like),
+    ).fetchall()
+    conn.close()
+    return prospects, candidates
+
+
+def remove_person(term, reason="manually removed"):
+    """Take someone out of the pipeline permanently.
+
+    Suppression is the mechanism rather than deletion: `upsert_prospect` checks
+    the suppression table on every intake path, so a removed creator can't be
+    silently re-added next time discovery finds their channel. Deleting the row
+    would let them back in on the next run.
+
+    Matches on channel name or email, across prospects and candidates.
+    """
+    prospects, candidates = find_people(term)
+    conn = connect()
+    removed = []
+
+    for row in prospects:
+        if row["email"]:
+            conn.execute(
+                "INSERT OR IGNORE INTO suppression (email, reason, created_at) "
+                "VALUES (?,?,?)", (row["email"], reason, _now()),
+            )
+        conn.execute(
+            "UPDATE prospects SET status='unsubscribed', updated_at=? WHERE id=?",
+            (_now(), row["id"]),
+        )
+        removed.append({"kind": "prospect", "channel": row["channel_name"],
+                        "email": row["email"], "was": row["status"]})
+
+    for row in candidates:
+        if row["email"]:
+            conn.execute(
+                "INSERT OR IGNORE INTO suppression (email, reason, created_at) "
+                "VALUES (?,?,?)", (row["email"], reason, _now()),
+            )
+        # promoted_at stops it surfacing in the digest or promote queue again.
+        conn.execute(
+            "UPDATE candidates SET promoted_at=?, updated_at=? WHERE id=?",
+            (_now(), _now(), row["id"]),
+        )
+        removed.append({"kind": "candidate", "channel": row["channel_name"],
+                        "email": row["email"], "was": "candidate"})
+
+    conn.commit()
+    conn.close()
+    return removed
+
+
 def set_meta(key, value):
     conn = connect()
     conn.execute(
