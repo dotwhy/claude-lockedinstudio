@@ -66,6 +66,8 @@ class Handler(BaseHTTPRequestHandler):
                 "prep": db.prep_progress(),
                 "discovery": db.discovery_progress(),
             })
+        elif self.path.startswith("/preview"):
+            self._handle_preview()
         else:
             _json_response(self, 404, {"error": "not found"})
 
@@ -137,6 +139,46 @@ class Handler(BaseHTTPRequestHandler):
             "subs": subs,
         })
 
+
+    def _handle_preview(self):
+        """GET /preview?n=3 — render the emails that WOULD be sent next.
+
+        Read-only. The generated lines otherwise exist only in the background
+        job's stdout, which means the one review gate that matters — reading
+        the copy before it goes to real creators — requires scrolling a log
+        console. This puts the finished email where it can actually be read.
+        """
+        from urllib.parse import parse_qs, urlparse
+        params = parse_qs(urlparse(self.path).query)
+        try:
+            limit = max(1, min(int(params.get("n", ["3"])[0]), 20))
+        except ValueError:
+            limit = 3
+
+        db.init()
+        import config as cfg
+        rows = db.prospects_by_status("parked") + db.prospects_by_status("queued")
+        rows = [r for r in rows if r["personalized_line"]][:limit]
+
+        previews = []
+        for row in rows:
+            if row["status"] == "parked":
+                subject, body = cfg.retouch(row["first_name"], row["channel_name"],
+                                            row["personalized_line"] or "")
+                kind = "re-touch (contacted before)"
+            else:
+                subject, body = cfg.opener(row["first_name"], row["channel_name"],
+                                           row["personalized_line"] or "")
+                kind = "opener (first contact)"
+            previews.append({
+                "channel": row["channel_name"],
+                "to": row["email"],
+                "kind": kind,
+                "line": row["personalized_line"],
+                "subject": subject,
+                "body": body,
+            })
+        _json_response(self, 200, {"dry_run": cfg.DRY_RUN, "previews": previews})
 
     def _handle_run(self, job):
         """Trigger a scheduled job on demand: POST /run/<job>.
