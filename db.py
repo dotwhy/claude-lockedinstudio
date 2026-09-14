@@ -830,6 +830,44 @@ def remove_person(term, reason="manually removed"):
     return removed
 
 
+# Statuses you can move someone to by hand. 'hold' is the useful one: the
+# machine never emails a hold, but you still can — it means "mine to handle",
+# not "never contact again".
+SETTABLE_STATUSES = ("new", "parked", "hold", "queued", "unsubscribed",
+                     "not_interested", "bounced")
+
+
+def set_person_status(term, status):
+    """Move someone to a status by name or email.
+
+    Clearing suppression matters here. `remove_person` suppresses, and
+    suppression is checked on every intake path — so moving someone back to a
+    non-terminal status while a suppression row lingers would leave them
+    silently blocked, looking present in the pipeline but unable to ever be
+    contacted or re-added.
+    """
+    if status not in SETTABLE_STATUSES:
+        raise ValueError(f"unknown status '{status}'")
+    prospects, _ = find_people(term)
+    if not prospects:
+        return []
+
+    terminal = status in TERMINAL or status == "unsubscribed"
+    conn = connect()
+    changed = []
+    for row in prospects:
+        conn.execute("UPDATE prospects SET status=?, updated_at=? WHERE id=?",
+                     (status, _now(), row["id"]))
+        if not terminal and row["email"]:
+            conn.execute("DELETE FROM suppression WHERE email=?", (row["email"],))
+        changed.append({"channel": row["channel_name"], "email": row["email"],
+                        "was": row["status"], "now": status,
+                        "suppression_cleared": bool(not terminal and row["email"])})
+    conn.commit()
+    conn.close()
+    return changed
+
+
 def set_meta(key, value):
     conn = connect()
     conn.execute(

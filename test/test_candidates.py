@@ -345,3 +345,47 @@ def test_remove_handles_a_candidate_with_no_email(db):
 
 def test_remove_matching_nothing_is_harmless(db):
     assert db.remove_person("nobody-by-that-name") == []
+
+
+# --- moving someone to a status by hand --------------------------------------
+def test_hold_stops_all_automated_contact(db):
+    db.upsert_prospect(channel_name="Nuno", email="nuno@mgmt.com",
+                       status="parked", source="sheet")
+    db.set_person_status("nuno", "hold")
+
+    assert db.prospects_by_status("hold")[0]["channel_name"] == "Nuno"
+    assert db.parked_due(90, force=True) == []
+    assert db.prospects_needing_line() == []
+
+
+def test_moving_to_hold_clears_suppression(db):
+    # remove_person suppresses. Moving back to hold without clearing it would
+    # leave him visible in the pipeline but permanently unreachable.
+    db.upsert_prospect(channel_name="Nuno", email="nuno@mgmt.com",
+                       status="parked", source="sheet")
+    db.remove_person("nuno")
+    assert db.is_suppressed("nuno@mgmt.com")
+
+    changed = db.set_person_status("nuno", "hold")
+    assert changed[0]["suppression_cleared"] is True
+    assert not db.is_suppressed("nuno@mgmt.com")
+
+
+def test_moving_to_a_terminal_status_keeps_suppression(db):
+    db.upsert_prospect(channel_name="Gone", email="gone@x.com", source="sheet")
+    db.remove_person("gone")
+    db.set_person_status("gone", "unsubscribed")
+    assert db.is_suppressed("gone@x.com")
+
+
+def test_unknown_status_is_rejected(db):
+    db.upsert_prospect(channel_name="Nuno", email="nuno@mgmt.com", source="sheet")
+    try:
+        db.set_person_status("nuno", "whatever")
+    except ValueError:
+        return
+    assert False, "an arbitrary status must not be accepted"
+
+
+def test_status_change_on_nobody_is_harmless(db):
+    assert db.set_person_status("nobody", "hold") == []

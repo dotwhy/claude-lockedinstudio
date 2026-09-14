@@ -83,6 +83,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_run(self.path[len("/run/"):])
         if self.path == "/remove":
             return self._handle_remove()
+        if self.path == "/status":
+            return self._handle_status()
         if self.path != "/add":
             _json_response(self, 404, {"error": "not found"})
             return
@@ -215,6 +217,26 @@ class Handler(BaseHTTPRequestHandler):
         removed = db.remove_person(term, body.get("reason") or "manually removed")
         _json_response(self, 200, {"query": term, "removed": removed,
                                    "count": len(removed)})
+
+    def _handle_status(self):
+        """POST /status {"q": "nuno", "status": "hold"} — move someone by hand."""
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length)) if length else {}
+        term = (body.get("q") or body.get("channel") or body.get("email") or "").strip()
+        status = (body.get("status") or "").strip()
+        if not term or not status:
+            _json_response(self, 400, {"error": "pass 'q' and 'status'",
+                                       "statuses": list(db.SETTABLE_STATUSES)})
+            return
+        db.init()
+        try:
+            changed = db.set_person_status(term, status)
+        except ValueError as exc:
+            _json_response(self, 400, {"error": str(exc),
+                                       "statuses": list(db.SETTABLE_STATUSES)})
+            return
+        _json_response(self, 200, {"query": term, "changed": changed,
+                                   "count": len(changed)})
 
     def _handle_run(self, job):
         """Trigger a scheduled job on demand: POST /run/<job>.
