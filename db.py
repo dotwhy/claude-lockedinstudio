@@ -686,6 +686,61 @@ def promote_candidate(candidate):
     return created
 
 
+def prep_progress():
+    """How far the sheet-imported prospects are through preparation.
+
+    enrich fills channel_id; personalize fills the line. Both run in the
+    background and log to stdout, so this is the only way to check them from
+    outside the container.
+    """
+    conn = connect()
+    row = conn.execute(
+        """SELECT COUNT(*) AS total,
+                  SUM(CASE WHEN channel_id IS NOT NULL THEN 1 ELSE 0 END) AS enriched,
+                  SUM(CASE WHEN personalized_line IS NOT NULL
+                            AND personalized_line != '' THEN 1 ELSE 0 END) AS personalized,
+                  SUM(CASE WHEN platform='twitch' THEN 1 ELSE 0 END) AS twitch
+             FROM prospects WHERE status IN ('new','queued','parked')"""
+    ).fetchone()
+    conn.close()
+    return {
+        "contactable": row["total"] or 0,
+        "enriched": row["enriched"] or 0,
+        "personalized": row["personalized"] or 0,
+        # Twitch rows have no YouTube channel to enrich from, so they cap what
+        # "enriched" can ever reach. Surfaced so a shortfall isn't mistaken
+        # for a failure.
+        "twitch_cannot_enrich": row["twitch"] or 0,
+    }
+
+
+def discovery_progress():
+    """Candidate pipeline: found, scored, waiting on an address from you."""
+    conn = connect()
+    row = conn.execute(
+        """SELECT COUNT(*) AS total,
+                  SUM(CASE WHEN growth_signal IS NOT NULL THEN 1 ELSE 0 END) AS scored,
+                  SUM(CASE WHEN growth_signal='growing' THEN 1 ELSE 0 END) AS growing,
+                  SUM(CASE WHEN fast_track=1 THEN 1 ELSE 0 END) AS fast_track,
+                  SUM(CASE WHEN promoted_at IS NOT NULL THEN 1 ELSE 0 END) AS promoted
+             FROM candidates"""
+    ).fetchone()
+    snapshots = conn.execute(
+        "SELECT COUNT(DISTINCT substr(captured_at,1,10)) AS days FROM channel_snapshots"
+    ).fetchone()
+    conn.close()
+    return {
+        "candidates": row["total"] or 0,
+        "scored": row["scored"] or 0,
+        "growing": row["growing"] or 0,
+        "fast_track": row["fast_track"] or 0,
+        "promoted": row["promoted"] or 0,
+        # Growth needs two snapshots on different days before it can say
+        # anything at all.
+        "snapshot_days": snapshots["days"] or 0,
+    }
+
+
 def set_meta(key, value):
     conn = connect()
     conn.execute(

@@ -252,3 +252,43 @@ def test_hold_prospects_are_never_prepared_for_sending(db):
     db.upsert_prospect(channel_name="InTalks", email="t@x.com",
                        status="hold", source="sheet")
     assert db.prospects_needing_line() == []
+
+
+# --- progress visibility ----------------------------------------------------
+def test_prep_progress_tracks_enrich_and_personalize(db):
+    db.upsert_prospect(channel_name="A", email="a@x.com", status="parked", source="sheet")
+    db.upsert_prospect(channel_name="B", email="b@x.com", status="parked", source="sheet")
+    p = db.prep_progress()
+    assert p["contactable"] == 2 and p["enriched"] == 0 and p["personalized"] == 0
+
+    row = db.prospects_by_status("parked")[0]
+    db.set_channel_data(row["id"], "UC1", 80_000, None)
+    db.set_line(row["id"], "a line")
+    p = db.prep_progress()
+    assert p["enriched"] == 1 and p["personalized"] == 1
+
+
+def test_prep_progress_flags_twitch_rows_that_cannot_enrich(db):
+    # Otherwise a shortfall in "enriched" looks like a failure.
+    db.upsert_prospect(channel_name="T", email="t@x.com", status="parked",
+                       platform="twitch", source="sheet")
+    assert db.prep_progress()["twitch_cannot_enrich"] == 1
+
+
+def test_prep_progress_ignores_hold_prospects(db):
+    db.upsert_prospect(channel_name="H", email="h@x.com", status="hold", source="sheet")
+    assert db.prep_progress()["contactable"] == 0
+
+
+def test_discovery_progress_counts_the_candidate_funnel(db):
+    db.upsert_candidate("UC1", "Growing", 80_000)
+    db.upsert_candidate("UC2", "Big", 900_000, fast_track=True)
+    db.set_candidate_growth("UC1", "growing", 9.0)
+    d = db.discovery_progress()
+    assert d["candidates"] == 2 and d["scored"] == 1
+    assert d["growing"] == 1 and d["fast_track"] == 1 and d["promoted"] == 0
+
+
+def test_discovery_progress_counts_snapshot_days(db):
+    db.record_snapshot("UC1", "A", 100, 1, 1, None)
+    assert db.discovery_progress()["snapshot_days"] == 1

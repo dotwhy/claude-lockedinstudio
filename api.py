@@ -59,6 +59,12 @@ class Handler(BaseHTTPRequestHandler):
                 "sent_today": db.sends_today(),
                 "pipeline": counts,
                 "awaiting_review": review,
+                # Background jobs return 202 and log to stdout, which is
+                # invisible to anything but the Railway console. Without these
+                # there is no way to tell from outside whether enrich or
+                # personalize actually did anything.
+                "prep": db.prep_progress(),
+                "discovery": db.discovery_progress(),
             })
         else:
             _json_response(self, 404, {"error": "not found"})
