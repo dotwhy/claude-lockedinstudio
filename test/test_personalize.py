@@ -113,3 +113,99 @@ def test_followups_reply_in_thread():
     # instead of starting a second conversation.
     assert config.followup_1("Sammy", "SammyGames", "")[0] is None
     assert config.followup_2("Sammy", "SammyGames", "")[0] is None
+
+
+# --- the last gate before an email reaches a real creator -------------------
+# Everything here is a line that actually came back from the model in
+# production, or a near-miss of one.
+
+def test_model_narrating_its_own_limits_is_rejected():
+    # This exact line was generated for c0nvextv and would have been emailed.
+    bad = ("I don't have access to c0nvextv's latest video title, view count, "
+           "or performance data, so I can't write a line that proves real "
+           "research without inventing facts.")
+    assert personalize.validate_line(bad) is None
+
+
+def test_other_refusal_shapes_are_rejected():
+    for bad in [
+        "I cannot write a personalized line without more information.",
+        "To write this properly, I'd need the video title and view count.",
+        "As an AI, I don't have enough context about this channel.",
+        "[INSERT PERSONALIZED LINE HERE]",
+        "Insufficient data to generate a line.",
+    ]:
+        assert personalize.validate_line(bad) is None, bad
+
+
+def test_literal_none_is_rejected():
+    assert personalize.validate_line("NONE") is None
+    assert personalize.validate_line("None") is None
+
+
+def test_overclaiming_a_pattern_is_rejected():
+    # We see ONE video. "consistently" claims a trend we never measured.
+    bad = ('Your "$5000 ROBUX" video format consistently outperforms your '
+           'channel average—we noticed the pattern.')
+    assert personalize.validate_line(bad) is None
+
+
+def test_verbal_tics_are_rejected():
+    # Fine once. Across 40 emails it reads as a template — and "hit different"
+    # came back in 4 of the first 6 generations.
+    assert personalize.validate_line("Your dinner shorts format is hitting different.") is None
+    assert personalize.validate_line("Your latest upload hit different.") is None
+    assert personalize.validate_line("That edit is fire.") is None
+
+
+def test_rambling_output_is_rejected():
+    assert personalize.validate_line(" ".join(["word"] * 40)) is None
+
+
+def test_a_good_line_survives():
+    good = ("Your XXL Modpack series keeps the pacing tight while giving "
+            "viewers plenty to explore.")
+    assert personalize.validate_line(good) == good
+
+
+def test_surrounding_quotes_and_whitespace_are_stripped():
+    assert personalize.validate_line('  "Your Stumble Guys comeback was a good watch."  ') \
+        == "Your Stumble Guys comeback was a good watch."
+
+
+def test_internal_whitespace_is_normalised():
+    assert personalize.validate_line("Your   video\n\nwas good.") == "Your video was good."
+
+
+def test_empty_input_is_rejected():
+    assert personalize.validate_line("") is None
+    assert personalize.validate_line(None) is None
+
+
+def test_prompt_tells_the_model_to_say_none_rather_than_explain():
+    assert "exactly the word NONE" in build()
+    assert "Never explain what you're missing" in build()
+
+
+def test_prompt_bans_pattern_claims_and_tics():
+    prompt = build()
+    assert "consistently" in prompt
+    assert "hit different" in prompt
+
+
+def test_retouch_template_renders_cleanly_with_no_line(monkeypatch):
+    # The fallback when validation rejects everything: the email must still
+    # read properly, with no gap or stray punctuation where the line would be.
+    monkeypatch.setattr(config, "FROM_NAME", "Laurenz")
+    subject, body = config.retouch("Sammy", "SammyGames", "")
+    assert "Hey Sammy," in body
+    assert "\n\n\n" not in body
+    assert subject
+
+
+def test_opener_template_renders_cleanly_with_no_line(monkeypatch):
+    monkeypatch.setattr(config, "FROM_NAME", "Laurenz")
+    monkeypatch.setattr(config, "PORTFOLIO_URL", "lockedin.studio/work")
+    _, body = config.opener("Sammy", "SammyGames", "")
+    assert "Hey Sammy," in body
+    assert "unsubscribe" in body.lower()

@@ -16,6 +16,10 @@ import emails
 #   not_interested / unsubscribed / bounced -> terminal, never contacted again
 TERMINAL = ("not_interested", "unsubscribed", "bounced", "interested")
 
+# Give up writing a line after this many tries. Some channels simply have no
+# usable video data, and a line is optional — the email reads fine without it.
+MAX_LINE_ATTEMPTS = 2
+
 
 def _now():
     return datetime.now(timezone.utc).isoformat()
@@ -151,7 +155,11 @@ def init():
                      # the model say "I saw your video"; knowing that video did
                      # 3x the channel average lets it say something the creator
                      # themselves would find true and specific.
-                     ("latest_video_views", "INTEGER"), ("avg_views", "INTEGER")]:
+                     ("latest_video_views", "INTEGER"), ("avg_views", "INTEGER"),
+                     # Some channels have nothing concrete to write a line
+                     # from. Counting attempts stops the job re-asking Claude
+                     # about them on every single run, forever.
+                     ("line_attempts", "INTEGER")]:
         try:
             conn.execute(f"ALTER TABLE prospects ADD COLUMN {col} {typ}")
         except sqlite3.OperationalError:
@@ -232,10 +240,23 @@ def prospects_needing_line():
     rows = conn.execute(
         "SELECT * FROM prospects WHERE email IS NOT NULL "
         "AND (status='new' OR (status='parked' AND "
-        "     (personalized_line IS NULL OR personalized_line='')))"
+        "     (personalized_line IS NULL OR personalized_line=''))) "
+        "AND COALESCE(line_attempts, 0) < ?",
+        (MAX_LINE_ATTEMPTS,),
     ).fetchall()
     conn.close()
     return rows
+
+
+def record_line_attempt(prospect_id):
+    """Count a personalization attempt, whether or not it produced a line."""
+    conn = connect()
+    conn.execute(
+        "UPDATE prospects SET line_attempts=COALESCE(line_attempts,0)+1, "
+        "updated_at=? WHERE id=?", (_now(), prospect_id),
+    )
+    conn.commit()
+    conn.close()
 
 
 def active_prospects():

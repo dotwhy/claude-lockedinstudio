@@ -246,6 +246,7 @@ JOBS = {
     "snapshot": lambda: __import__("youtube_sourcing").snapshot_all(),
     "promote": lambda: __import__("youtube_sourcing").promote_growing(),
     "personalize": lambda: __import__("personalize").run(),
+    "revalidate": lambda: __import__("personalize").revalidate_stored(),
     "send": lambda: __import__("engine").send_due(),
     "replies": lambda: __import__("engine").process_replies(),
     "candidates": lambda: __import__("engine").send_candidate_digest(),
