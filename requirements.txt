@@ -5,3 +5,7 @@ google-auth-oauthlib>=1.2.0
 google-auth-httplib2>=0.2.0
 python-dotenv>=1.0.1
 apscheduler>=3.10.4
+
+# Dev only — the Railway image installs it too, which costs a few seconds of
+# build time and buys the ability to run the suite against the real container.
+pytest>=8.0.0

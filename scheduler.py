@@ -44,7 +44,10 @@ def main():
     db.init()
 
     port = api.start()
-    log.info(f"API listening on port {port}")
+    if port:
+        log.info(f"API listening on port {port}")
+    else:
+        log.warning("API not started (no API_KEY). Scheduled jobs still run.")
 
     sched = BlockingScheduler(timezone="UTC")
 
@@ -65,11 +68,28 @@ def main():
     sched.add_job(safe(engine.send_digest, "digest"),
                   CronTrigger(day_of_week="mon-fri", hour=18, minute=30), name="digest")
 
-    # Weekly: enrich any new prospects, then snapshot subs for growth tracking.
+    # --- the Monday research block ------------------------------------------
+    # Ordered deliberately: discover finds channels, enrich fills gaps in rows
+    # that arrived without a channel_id, snapshot captures counts AND scores
+    # growth, promote graduates whatever now qualifies, digest asks you about
+    # the ones still missing an address. Each step feeds the next, so the gaps
+    # are sized to let a slow run finish before the next starts.
+    sched.add_job(safe(youtube_sourcing.discover, "discover"),
+                  CronTrigger(day_of_week="mon", hour=6, minute=0), name="discover")
     sched.add_job(safe(youtube_sourcing.enrich_prospects, "enrich"),
                   CronTrigger(day_of_week="mon", hour=6, minute=30), name="enrich")
     sched.add_job(safe(youtube_sourcing.snapshot_all, "snapshot"),
                   CronTrigger(day_of_week="mon", hour=7, minute=0), name="snapshot")
+    sched.add_job(safe(youtube_sourcing.promote_growing, "promote"),
+                  CronTrigger(day_of_week="mon", hour=7, minute=30), name="promote")
+    sched.add_job(safe(engine.send_candidate_digest, "candidate-digest"),
+                  CronTrigger(day_of_week="mon", hour=8, minute=0), name="candidate-digest")
+
+    # Your reply to the digest lands whenever it lands. Checked a few times a
+    # day rather than weekly, so an address you send on Monday afternoon is in
+    # the sequence by Monday evening instead of waiting a week.
+    sched.add_job(safe(engine.process_digest_replies, "digest-replies"),
+                  CronTrigger(day_of_week="mon-fri", hour="9,14,18"), name="digest-replies")
 
     # Long loop: re-touch parked prospects whose ~90-day wait is up. Runs the
     # normal (non-force) pass; the one-time re-enroll is `run.py retouch --now`.

@@ -6,7 +6,13 @@ Gmail, drops anyone who unsubscribes or says no, and flags the good replies
 for you to handle personally.
 
 ## What it does on its own
-- **Sources** candidate channels via the YouTube API (subs, latest video).
+- **Discovers** Roblox channels via the YouTube API and keeps the ones in band.
+- **Finds emails** in the channel's own public text — About description and
+  recent video descriptions ("Business enquiries: ..."). No captcha, no Apollo.
+- **Tracks growth** weekly. A channel is worth contacting when it's rising, or
+  when it's already 500k+ and still posting.
+- **Asks you** once a week for the addresses it couldn't find, in one email.
+  Reply with `ChannelName: email@host` and it takes it from there.
 - **Personalizes** one opening line per creator with Claude — the part that
   actually earns replies.
 - **Sends** the opener + two follow-ups on a fixed cadence, in one thread.
@@ -21,8 +27,27 @@ for you to handle personally.
 ## What it does NOT do (on purpose)
 - It does **not** send anything while `DRY_RUN=true` (the shipped default).
 - It does **not** answer positive replies for you.
-- It does **not** scrape emails from YouTube About pages (captcha-gated). Email
-  discovery is a CSV import or an enrichment hook you wire up — see below.
+- It does **not** touch the captcha-gated "View email address" button on the
+  About page. It doesn't need to — most creators paste the same address into
+  their descriptions, which the API returns as plain text.
+- It does **not** serve the HTTP API without `API_KEY` set. The routes write
+  into `prospects`, and anything there gets emailed from your Gmail.
+
+## How a channel becomes a prospect
+
+```
+discover ──► has a public email? ──yes──► prospect ──► personalize ──► send
+                     │
+                     no
+                     ▼
+                 candidate ──► snapshot weekly ──► growing, or 500k+ and active?
+                                                            │
+                                    ┌───────────────────────┘
+                                    ▼
+                          weekly digest asks you for the address
+                                    │
+                          you reply ──► prospect ──► personalize ──► send
+```
 
 ---
 

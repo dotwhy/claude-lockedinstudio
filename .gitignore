@@ -9,3 +9,9 @@ streamer_outreach.csv
 __pycache__/
 *.pyc
 .venv/
+
+# Real contact data — never commit
+.DS_Store
+excel sheet streamer outreach.csv
+*.csv
+!prospects.sample.csv

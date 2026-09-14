@@ -7,6 +7,7 @@ from datetime import datetime, timezone, timedelta
 
 import config
 import db
+import emails
 import gmail_client
 import classifier
 
@@ -126,6 +127,155 @@ def send_digest():
     gmail_client.send(to=gmail_client.address(), subject="Outreach: replies to review", body=body)
     print(f"Digest of {len(rows)} reply(ies) sent to yourself.")
     return len(rows)
+
+
+# --- the weekly "help me find these emails" loop ----------------------------
+# Discovery finds channels worth contacting that don't publish an address
+# anywhere public. Those are a dead end for the machine but a two-minute job
+# for a human, so once a week we ask.
+#
+#   candidates (actionable, no email)
+#        │
+#        ▼  send_candidate_digest()   one email, to you
+#   "12 channels need emails. Reply with one per line."
+#        │
+#        ▼  you hit reply, paste addresses
+#   process_digest_replies()  parse -> match -> promote -> confirm back
+#
+# The confirmation is not optional politeness: without it, a typo'd line is
+# silently dropped and you believe you submitted a channel that was never
+# contacted.
+DIGEST_SUBJECT = "Outreach: channels that need an email"
+
+_DIGEST_HELP = (
+    "Reply to this email with one channel per line, like:\n\n"
+    "  SammyGames: sammy@business.com\n"
+    "  BloxKing: contact@bloxking.tv\n\n"
+    "Anything I can't match, I'll tell you about in a reply."
+)
+
+
+def send_candidate_digest():
+    """Ask you, once a week, for the addresses the scraper couldn't find."""
+    rows = db.candidates_needing_email(config.CANDIDATE_REASK_DAYS)
+    if not rows:
+        print("No candidates need an email. No digest sent.")
+        return 0
+
+    lines = [f"{len(rows)} channel{'s' if len(rows) != 1 else ''} worth contacting, "
+             "but I couldn't find an address for them:\n"]
+    for row in rows:
+        subs = f"{row['subscriber_count']:,}" if row["subscriber_count"] else "?"
+        if row["fast_track"]:
+            why = "500k+ and posting"
+        elif row["growth_pct"] is not None:
+            why = f"growing {row['growth_pct']:+.1f}%"
+        else:
+            why = "growing"
+        lines.append(f"• {row['channel_name']} ({subs} subs, {why})\n"
+                     f"    {row['profile_url'] or ''}")
+    lines.append("\n" + _DIGEST_HELP)
+
+    body = "\n".join(lines)
+    gmail_id, thread_id, _ = gmail_client.send(
+        to=gmail_client.address(), subject=DIGEST_SUBJECT, body=body
+    )
+    db.mark_candidates_asked([r["channel_id"] for r in rows])
+    db.record_digest_thread(thread_id)
+    print(f"Digest of {len(rows)} candidate(s) sent to yourself.")
+    return len(rows)
+
+
+def _parse_digest_reply(text):
+    """Pull "Channel Name: email@host" pairs out of your reply.
+
+    Tolerant on purpose — you'll be typing this on a phone. Accepts colon,
+    dash, or just whitespace between the name and the address, ignores quoted
+    text from the original digest, and skips lines with no address at all.
+
+    Returns (pairs, unparsed_lines).
+    """
+    pairs = []
+    unparsed = []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith(">") or line.startswith("•"):
+            continue  # quoted original, or the digest's own bullet list
+        address = emails.clean(line)
+        if not address:
+            # Only complain about lines that look like an attempt — a line with
+            # an "@" but no valid address is a typo worth reporting; prose
+            # isn't.
+            if "@" in line:
+                unparsed.append(line)
+            continue
+        name = line.replace(address, "", 1)
+        for token in (address.upper(), address.lower()):
+            name = name.replace(token, "")
+        name = name.strip(" :-–—\t")
+        if not name:
+            unparsed.append(line)
+            continue
+        pairs.append((name, address))
+    return pairs, unparsed
+
+
+def process_digest_replies():
+    """Read your reply to the digest, attach the addresses, promote, confirm."""
+    thread_id = db.latest_digest_thread()
+    if not thread_id:
+        print("No digest thread on record. Nothing to read.")
+        return 0
+
+    text, _ = gmail_client.latest_inbound(thread_id, 0)
+    if not text:
+        print("No reply to the digest yet.")
+        return 0
+
+    pairs, unparsed = _parse_digest_reply(text)
+    matched, unmatched = [], []
+    for name, address in pairs:
+        candidate = db.candidate_by_name(name)
+        if not candidate:
+            unmatched.append(f"{name}: {address}")
+            continue
+        db.set_candidate_email(candidate["channel_id"], address)
+        matched.append(f"{candidate['channel_name']} <{address}>")
+
+    promoted = 0
+    for candidate in db.candidates_to_promote():
+        if db.promote_candidate(candidate):
+            promoted += 1
+
+    _confirm_digest_reply(thread_id, matched, unmatched, unparsed, promoted)
+    print(f"Digest reply: {len(matched)} matched, "
+          f"{len(unmatched) + len(unparsed)} not matched, {promoted} promoted.")
+    return len(matched)
+
+
+def _confirm_digest_reply(thread_id, matched, unmatched, unparsed, promoted):
+    """Tell you exactly what landed and what didn't.
+
+    A silent parser is worse than no parser: you'd believe a channel was queued
+    when the line was dropped, and never find out.
+    """
+    lines = []
+    if matched:
+        lines.append(f"Added {len(matched)}, {promoted} now queued for the opener:")
+        lines += [f"  ✓ {m}" for m in matched]
+    if unmatched:
+        lines.append("\nI couldn't find a channel by these names "
+                     "(check the spelling against the digest):")
+        lines += [f"  ? {u}" for u in unmatched]
+    if unparsed:
+        lines.append("\nI couldn't read these lines:")
+        lines += [f"  ! {u}" for u in unparsed]
+        lines.append("\nFormat is  ChannelName: email@host")
+    if not lines:
+        lines.append("I couldn't find any addresses in that reply.\n\n" + _DIGEST_HELP)
+
+    gmail_client.send(to=gmail_client.address(), subject=None,
+                      body="\n".join(lines), thread_id=thread_id)
 
 
 def retouch_due(force=False):

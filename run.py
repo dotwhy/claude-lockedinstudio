@@ -105,10 +105,31 @@ def cmd_load(path):
     db.init()
     counts = import_sheet.load(path)
     print(f"Loaded sheet: {counts}")
-    print("  new    = will get the opener")
-    print("  parked = already contacted; waits for long-loop re-touch")
-    print("  hold   = manual / in contact / info-gathering; machine won't email")
-    print("  skipped= no email or non-email channel")
+    print("  new          = will get the opener")
+    print("  parked       = already contacted; waits for long-loop re-touch")
+    print("  hold         = manual / in contact / info-gathering; machine won't email")
+    print("  no_email     = no usable address, or Discord/donation only")
+    print("  suppressed   = previously bounced or unsubscribed; held out on purpose")
+    print("  already_known= email already in the database (safe re-import)")
+
+
+def cmd_promote():
+    import youtube_sourcing
+    db.init()
+    youtube_sourcing.promote_growing()
+
+
+def cmd_candidates():
+    """Send the weekly 'these channels need an email' digest."""
+    import engine
+    db.init()
+    engine.send_candidate_digest()
+
+
+def cmd_digest_replies():
+    import engine
+    db.init()
+    engine.process_digest_replies()
 
 
 def cmd_retouch(force=False):
@@ -141,6 +162,8 @@ COMMANDS = {
     "digest": cmd_digest, "tick": cmd_tick, "stats": cmd_stats,
     "content": cmd_content, "enrich": cmd_enrich, "snapshot": cmd_snapshot,
     "drafts": cmd_drafts, "load": cmd_load, "retouch": cmd_retouch,
+    "promote": cmd_promote, "candidates": cmd_candidates,
+    "digest-replies": cmd_digest_replies,
 }
 
 

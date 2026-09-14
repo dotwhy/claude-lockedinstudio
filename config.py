@@ -20,6 +20,28 @@ def _int(name, default):
 DRY_RUN = _bool("DRY_RUN", "true")
 MAX_SENDS_PER_DAY = _int("MAX_SENDS_PER_DAY", 30)
 
+# Shared secret for the HTTP API. Without it the API refuses to serve — the
+# endpoints write into `prospects`, and anything written there gets cold-emailed
+# from your personal Gmail, so an open endpoint is a spam relay with your name
+# on it. Unset means the API simply doesn't start; the scheduler still runs.
+API_KEY = os.getenv("API_KEY", "").strip()
+API_PORT = _int("PORT", 8080)  # Railway injects PORT
+
+# --- Discovery + growth -----------------------------------------------------
+# Window used to decide "is this channel growing". 30 days is long enough to
+# smooth a viral spike and short enough to catch momentum while it's live.
+GROWTH_WINDOW_DAYS = _int("GROWTH_WINDOW_DAYS", 30)
+
+# How long before the weekly digest re-asks about a channel you never resolved.
+CANDIDATE_REASK_DAYS = _int("CANDIDATE_REASK_DAYS", 30)
+
+# Snapshots resolve channels by id through channels.list (~1 unit per 50 ids).
+# Rows with no stored channel_id fall back to search.list, which costs 100 units
+# EACH — so the fallback is capped. Without this cap a few hundred id-less rows
+# would silently eat the entire 10,000/day quota and the job would die midway.
+CHANNEL_BATCH_SIZE = _int("CHANNEL_BATCH_SIZE", 50)
+MAX_SEARCH_FALLBACKS = _int("MAX_SEARCH_FALLBACKS", 20)
+
 # --- Anthropic --------------------------------------------------------------
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
@@ -30,7 +52,24 @@ YOUTUBE_SEARCH_TERMS = [
     t.strip() for t in os.getenv("YOUTUBE_SEARCH_TERMS", "roblox").split(",") if t.strip()
 ]
 MIN_SUBSCRIBERS = _int("MIN_SUBSCRIBERS", 20000)
-MAX_SUBSCRIBERS = _int("MAX_SUBSCRIBERS", 500000)
+
+# Upper bound on discovery. Raised from 500k so that established channels are
+# found at all — they used to be filtered out before anything else could look
+# at them. The cap still exists because there is no point queueing 20M-sub
+# channels that will never answer a cold email; they just burn quota and take
+# up slots under the daily send cap.
+MAX_SUBSCRIBERS = _int("MAX_SUBSCRIBERS", 5_000_000)
+
+# --- fast track -------------------------------------------------------------
+# At or above this size, a channel does not have to prove it is growing. It is
+# already established, and waiting two snapshot cycles to email it is two weeks
+# of nothing. Growth detection exists to find channels on the way up; a channel
+# that is already up doesn't need the test.
+#
+# "Actively posting" is the other half — a large but dormant channel is worse
+# than a small live one, because the audience has already moved on.
+FASTTRACK_SUBSCRIBERS = _int("FASTTRACK_SUBSCRIBERS", 500_000)
+ACTIVE_UPLOAD_DAYS = _int("ACTIVE_UPLOAD_DAYS", 30)
 
 # --- Gmail ------------------------------------------------------------------
 GMAIL_CREDENTIALS_FILE = os.getenv("GMAIL_CREDENTIALS_FILE", "credentials.json")
@@ -45,6 +84,19 @@ GMAIL_SCOPES = [
 STUDIO_NAME = os.getenv("STUDIO_NAME", "LockedIn Studio")
 STUDIO_ADDRESS = os.getenv("STUDIO_ADDRESS", "")
 PORTFOLIO_URL = os.getenv("PORTFOLIO_URL", "")
+
+# What the studio actually does, in the words the opener should be written
+# from. This is fed to Claude when generating the personalized line so the line
+# can connect what a creator already makes to what we'd build for them —
+# without it, the model can only comment on their content and the connection to
+# the offer has to be carried by the template, which reads like a form letter.
+#
+# Keep this short. It is context for one sentence, not a brief.
+STUDIO_CONTEXT = os.getenv("STUDIO_CONTEXT", """\
+LockedIn Studio builds full Roblox games for creators, end to end: design,
+development, and live-ops. The creator owns the game; we handle everything
+inside Roblox Studio. Games are built around the creator's existing audience
+and content style, so their viewers already want to play it.""").strip()
 
 # --- Storage ----------------------------------------------------------------
 DB_PATH = os.getenv("DB_PATH", "outreach.db")
@@ -69,16 +121,21 @@ def _footer():
 # --- Email templates --------------------------------------------------------
 # Each returns (subject, body). `line` is the AI-generated personalization.
 def opener(first_name, channel_name, line):
+    """The first email. ~35 words before the footer, on purpose.
+
+    The old version wrapped the personalized line in a 30-word pitch paragraph,
+    which made a message that opened with genuine attention read like a
+    templated sales email by the third line. The line does the work; the body
+    just has to say what we do and get out of the way.
+    """
     subject = f"A Roblox game built for {channel_name}"
     body = (
         f"Hey {first_name},\n\n"
         f"{line}\n\n"
-        "We build full Roblox games end-to-end for creators — design, development "
-        "and live-ops — so you can launch something that actually retains and "
-        "monetises, without touching Studio yourself.\n\n"
-        f"A few things we've shipped: {PORTFOLIO_URL}\n\n"
+        "We build Roblox games for creators, end to end. "
+        f"A few we've shipped: {PORTFOLIO_URL}\n\n"
         "Worth a quick chat?\n\n"
-        f"best,\n{FROM_NAME}\n{STUDIO_NAME}\n\n"
+        f"{FROM_NAME}, {STUDIO_NAME}\n\n"
         f"{_footer()}"
     )
     return subject, body
