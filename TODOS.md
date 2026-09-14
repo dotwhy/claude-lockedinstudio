@@ -5,6 +5,77 @@ reasoning survives longer than the conversation it came from.
 
 ---
 
+## 0. Autonomous health monitoring and alerts — NEXT
+
+**What:** The system should tell you when it breaks, without you checking.
+
+**Why:** Right now a total failure and a quiet week look identical from the
+outside — an empty inbox. The whole reason this engine exists is so outreach
+happens without supervision, and an unsupervised system that can fail silently
+isn't autonomous, it's just unattended. This exact failure already happened
+once: the engine ran for months doing nothing, and nobody noticed until we went
+looking.
+
+### The design constraint that shapes everything
+
+**A monitor inside the worker cannot report its own death.** If the container
+crashes, the alerting crashes with it, and silence is indistinguishable from
+health. So this needs two halves:
+
+```
+INSIDE the worker                    OUTSIDE the worker
+─────────────────                    ──────────────────
+knows WHAT is wrong                  knows THAT it is alive
+(quota, bounces, stuck queue)        (dead-man's switch)
+        │                                    │
+        └──────────► email you ◄─────────────┘
+```
+
+The outside half is the important one and the easy one: a free uptime service
+(healthchecks.io, cron-job.org, UptimeRobot) pinging `GET /health` every few
+minutes. If it stops answering, they email you. No code required, ~5 minutes of
+setup, and it covers the failure mode that matters most.
+
+### What the inside half should check
+
+Silent failures this system can currently have, in rough order of damage:
+
+| Failure | How it looks today | Detectable by |
+|---|---|---|
+| Volume unmounted, DB reset | Everyone re-contacted from scratch | `prospects` count drops between runs |
+| Gmail token expired | Nothing sends, no error surfaces | send attempted but `sent_today` stays 0 |
+| Bounces climbing | Reputation quietly burning | bounce count vs sends over 7 days |
+| YouTube quota exhausted | Discovery/snapshot do nothing | job ran, candidate count unchanged |
+| Anthropic key invalid | Prospects stuck in `new` forever | `new` count rising, `personalized` flat |
+| Scheduler thread died | Some jobs silently stop | last-run timestamp per job goes stale |
+| Growth scoring frozen | Nothing ever promotes | `snapshot_days` stops incrementing |
+| Digest never answered | Candidates pile up unreachable | `candidates_needing_email` only grows |
+
+Implementation sketch: record a `last_run_at` and outcome per job in the `meta`
+table (the `safe()` wrapper in `scheduler.py` is already the right hook — it
+wraps every job and catches every exception). Then one daily job compares
+current state against yesterday's snapshot and emails a short status with a
+verdict line — **OK**, or **N problems** with what and since when.
+
+**Pros:** You find out about a break the day it happens rather than the month
+you next look. Also gives a weekly record of whether outreach is actually
+working, not just running.
+
+**Cons:** Alert fatigue if it reports normal variation as a problem. Aim for a
+digest that says "OK" in one line on a good day, and only gets long when
+something is genuinely wrong. An alert you learn to ignore is worse than none.
+
+**Context:** Raised 14 Sep 2026, right after the first real send went out (30
+re-touch emails). Everything needed to build it already exists: `/stats` exposes
+the numbers, `db.set_meta`/`get_meta` gives somewhere to store yesterday's
+snapshot, `engine.send_digest` is the email pattern to copy, and `safe()` in
+`scheduler.py` already wraps every job.
+
+**Blocked by:** Nothing. Do the external ping first — five minutes, covers the
+worst case — then the inside half.
+
+---
+
 ## 1. Move sending off personal Gmail
 
 **What:** Send outreach from a dedicated domain with proper warmup instead of
