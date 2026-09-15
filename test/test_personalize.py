@@ -308,3 +308,21 @@ def test_placeholder_address_still_blocks(monkeypatch):
     monkeypatch.setattr(config, "STUDIO_ADDRESS", "your real postal address here")
     monkeypatch.setattr(config, "PORTFOLIO_URL", "www.lockedinstudio.com")
     assert any("STUDIO_ADDRESS" in p for p in config.sending_config_problems())
+
+
+def test_retouch_gives_them_something_to_look_at(monkeypatch):
+    # It invited people to take "a quick look" while linking nothing at all —
+    # and it is the template every parked contact receives.
+    monkeypatch.setattr(config, "FROM_NAME", "Laurenz")
+    monkeypatch.setattr(config, "PORTFOLIO_URL", "www.lockedinstudio.com")
+    _, body = config.retouch("Sammy", "SammyGames", "a line")
+    assert "www.lockedinstudio.com" in body
+
+
+def test_retouch_uses_the_shared_footer(monkeypatch):
+    # It had its own hand-rolled sign-off, so footer changes silently skipped it.
+    monkeypatch.setattr(config, "FROM_NAME", "Laurenz")
+    monkeypatch.setattr(config, "STUDIO_ADDRESS", "Musterstr 1, Berlin")
+    _, body = config.retouch("Sammy", "SammyGames", "a line")
+    assert "LockedIn Studio · Musterstr 1, Berlin" in body
+    assert "unsubscribe" in body.lower()

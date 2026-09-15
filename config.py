@@ -227,9 +227,10 @@ def retouch(first_name, channel_name, line):
         f"Hey {first_name},\n\n"
         f"{personal}"
         "Reached out a while back about building you a Roblox game — circling "
-        "back now we've shipped a few more. If owning your own is on your radar, "
-        "worth a quick look? No stress if not.\n\n"
-        f"{FROM_NAME}, {STUDIO_NAME}\n"
-        "Reply 'unsubscribe' to opt out."
+        "back now we've shipped a few more. If owning your own is on your "
+        f"radar: {PORTFOLIO_URL}\n\n"
+        "No stress if not.\n\n"
+        f"{FROM_NAME}, {STUDIO_NAME}\n\n"
+        f"{_footer()}"
     )
     return subject, body
