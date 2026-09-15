@@ -118,6 +118,45 @@ def _footer():
     )
 
 
+# --- sending preflight ------------------------------------------------------
+# Markers that mean a value was never filled in. Two of these went out in real
+# emails: "A few we've shipped: your-portfolio-link-here" and a CAN-SPAM footer
+# reading "LockedIn Studio · your real postal address here".
+#
+# A placeholder in the footer is not cosmetic — the postal address is what makes
+# the email legal to send. Refusing to send is strictly better than sending
+# something that damages the brand and the compliance position at once.
+_PLACEHOLDER_MARKERS = ("your-", "your real", "your street", "your city",
+                        "<", ">", "example.com", "example.", "placeholder",
+                        "todo", "xxx", "here>", "-here", " here")
+
+
+def _looks_unset(value):
+    if not value or not value.strip():
+        return True
+    low = value.strip().lower()
+    return any(marker in low for marker in _PLACEHOLDER_MARKERS)
+
+
+def sending_config_problems():
+    """Config that must be real before anything may be emailed.
+
+    Returns a list of human-readable problems; empty means safe to send.
+    """
+    problems = []
+    if _looks_unset(FROM_NAME):
+        problems.append("FROM_NAME is empty or a placeholder")
+    if _looks_unset(STUDIO_ADDRESS):
+        problems.append(
+            "STUDIO_ADDRESS is empty or a placeholder — this is the CAN-SPAM "
+            "postal address and appears in every email footer")
+    if _looks_unset(PORTFOLIO_URL):
+        problems.append(
+            "PORTFOLIO_URL is empty or a placeholder — it appears in the "
+            "opener as 'A few we've shipped: ...'")
+    return problems
+
+
 # --- Email templates --------------------------------------------------------
 # Each returns (subject, body). `line` is the AI-generated personalization.
 def opener(first_name, channel_name, line):

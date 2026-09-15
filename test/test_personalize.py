@@ -209,3 +209,60 @@ def test_opener_template_renders_cleanly_with_no_line(monkeypatch):
     _, body = config.opener("Sammy", "SammyGames", "")
     assert "Hey Sammy," in body
     assert "unsubscribe" in body.lower()
+
+
+# --- sending preflight ------------------------------------------------------
+# Two real emails went out reading "A few we've shipped: your-portfolio-link-here"
+# and a CAN-SPAM footer of "LockedIn Studio · your real postal address here".
+
+def test_placeholder_portfolio_is_caught(monkeypatch):
+    monkeypatch.setattr(config, "FROM_NAME", "Laurenz")
+    monkeypatch.setattr(config, "STUDIO_ADDRESS", "Musterstr 1, 10115 Berlin, Germany")
+    monkeypatch.setattr(config, "PORTFOLIO_URL", "your-portfolio-link-here")
+    problems = config.sending_config_problems()
+    assert any("PORTFOLIO_URL" in p for p in problems)
+
+
+def test_placeholder_address_is_caught(monkeypatch):
+    monkeypatch.setattr(config, "FROM_NAME", "Laurenz")
+    monkeypatch.setattr(config, "STUDIO_ADDRESS", "your real postal address here")
+    monkeypatch.setattr(config, "PORTFOLIO_URL", "https://lockedin.studio/work")
+    problems = config.sending_config_problems()
+    assert any("STUDIO_ADDRESS" in p for p in problems)
+    assert any("CAN-SPAM" in p for p in problems)
+
+
+def test_env_example_style_placeholders_are_caught(monkeypatch):
+    monkeypatch.setattr(config, "FROM_NAME", "Laurenz")
+    monkeypatch.setattr(config, "STUDIO_ADDRESS", "LockedIn Studio, <your street>, <city>")
+    monkeypatch.setattr(config, "PORTFOLIO_URL", "https://your-portfolio-link.example")
+    assert len(config.sending_config_problems()) == 2
+
+
+def test_empty_values_are_caught(monkeypatch):
+    monkeypatch.setattr(config, "FROM_NAME", "")
+    monkeypatch.setattr(config, "STUDIO_ADDRESS", "   ")
+    monkeypatch.setattr(config, "PORTFOLIO_URL", None)
+    assert len(config.sending_config_problems()) == 3
+
+
+def test_real_values_pass(monkeypatch):
+    monkeypatch.setattr(config, "FROM_NAME", "Laurenz")
+    monkeypatch.setattr(config, "STUDIO_ADDRESS", "Musterstr 1, 10115 Berlin, Germany")
+    monkeypatch.setattr(config, "PORTFOLIO_URL", "https://lockedin.studio/work")
+    assert config.sending_config_problems() == []
+
+
+def test_send_paths_refuse_when_config_is_placeholder(monkeypatch):
+    # The actual protection: not a warning, a refusal.
+    import engine
+    monkeypatch.setattr(config, "PORTFOLIO_URL", "your-portfolio-link-here")
+    assert engine._preflight_blocked("test") is True
+
+
+def test_send_paths_proceed_when_config_is_real(monkeypatch):
+    import engine
+    monkeypatch.setattr(config, "FROM_NAME", "Laurenz")
+    monkeypatch.setattr(config, "STUDIO_ADDRESS", "Musterstr 1, 10115 Berlin, Germany")
+    monkeypatch.setattr(config, "PORTFOLIO_URL", "https://lockedin.studio/work")
+    assert engine._preflight_blocked("test") is False

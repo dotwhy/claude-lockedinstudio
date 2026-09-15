@@ -63,6 +63,9 @@ class Handler(BaseHTTPRequestHandler):
                 # invisible to anything but the Railway console. Without these
                 # there is no way to tell from outside whether enrich or
                 # personalize actually did anything.
+                # Placeholder config already reached two real creators. If
+                # this list is non-empty, every send path refuses.
+                "config_problems": config.sending_config_problems(),
                 "prep": db.prep_progress(),
                 "discovery": db.discovery_progress(),
             })

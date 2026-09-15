@@ -12,6 +12,23 @@ import gmail_client
 import classifier
 
 
+def _preflight_blocked(what):
+    """Refuse to send when the studio config still holds placeholders.
+
+    Checked at the top of every sending path rather than once at startup,
+    because a Railway variable can change between boot and send, and the cost
+    of being wrong is an email a real creator has already read.
+    """
+    problems = config.sending_config_problems()
+    if not problems:
+        return False
+    print(f"REFUSING TO SEND ({what}) — configuration is not ready:")
+    for problem in problems:
+        print(f"  ✗ {problem}")
+    print("Set these in the environment, then run again. Nothing was sent.")
+    return True
+
+
 def _due(prospect):
     """Is this prospect due for its next step right now?"""
     step = prospect["step"]
@@ -27,6 +44,8 @@ def _due(prospect):
 def send_due():
     """Walk queued + active prospects, send whatever step is due, respecting
     the per-day cap. Openers come from 'queued', follow-ups from 'active'."""
+    if _preflight_blocked("openers and follow-ups"):
+        return 0
     budget = config.MAX_SENDS_PER_DAY - db.sends_today()
     if budget <= 0:
         print(f"Daily cap reached ({config.MAX_SENDS_PER_DAY}). Nothing sent.")
@@ -282,6 +301,8 @@ def retouch_due(force=False):
     """Long-loop re-touch: send the concise new opener to parked prospects that
     are due (or all of them, if force=True for a one-time re-enroll). They stay
     'parked' and keep cycling every RETOUCH_WAIT_DAYS until they reply."""
+    if _preflight_blocked("re-touch"):
+        return 0
     budget = config.MAX_SENDS_PER_DAY - db.sends_today()
     if budget <= 0:
         print(f"Daily cap reached ({config.MAX_SENDS_PER_DAY}). No re-touch sent.")
