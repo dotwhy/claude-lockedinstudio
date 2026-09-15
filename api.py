@@ -65,7 +65,7 @@ class Handler(BaseHTTPRequestHandler):
                 # personalize actually did anything.
                 # Placeholder config already reached two real creators. If
                 # this list is non-empty, every send path refuses.
-                "config_problems": config.sending_config_problems(),
+                "config_problems": __import__("copy_audit").audit(),
                 "prep": db.prep_progress(),
                 "discovery": db.discovery_progress(),
             })
@@ -308,6 +308,7 @@ JOBS = {
     "promote": lambda: __import__("youtube_sourcing").promote_growing(),
     "personalize": lambda: __import__("personalize").run(),
     "revalidate": lambda: __import__("personalize").revalidate_stored(),
+    "audit": lambda: __import__("copy_audit").report(),
     "send": lambda: __import__("engine").send_due(),
     "replies": lambda: __import__("engine").process_replies(),
     "candidates": lambda: __import__("engine").send_candidate_digest(),

@@ -113,6 +113,12 @@ def cmd_load(path):
     print("  already_known= email already in the database (safe re-import)")
 
 
+def cmd_audit():
+    """Render every template and report anything a recipient shouldn't see."""
+    import copy_audit
+    raise SystemExit(1 if copy_audit.report() else 0)
+
+
 def cmd_promote():
     import youtube_sourcing
     db.init()
@@ -162,7 +168,7 @@ COMMANDS = {
     "digest": cmd_digest, "tick": cmd_tick, "stats": cmd_stats,
     "content": cmd_content, "enrich": cmd_enrich, "snapshot": cmd_snapshot,
     "drafts": cmd_drafts, "load": cmd_load, "retouch": cmd_retouch,
-    "promote": cmd_promote, "candidates": cmd_candidates,
+    "promote": cmd_promote, "audit": cmd_audit, "candidates": cmd_candidates,
     "digest-replies": cmd_digest_replies,
 }
 

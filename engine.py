@@ -19,7 +19,8 @@ def _preflight_blocked(what):
     because a Railway variable can change between boot and send, and the cost
     of being wrong is an email a real creator has already read.
     """
-    problems = config.sending_config_problems()
+    import copy_audit
+    problems = copy_audit.audit()
     if not problems:
         return False
     print(f"REFUSING TO SEND ({what}) — configuration is not ready:")

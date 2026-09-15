@@ -175,9 +175,12 @@ def opener(first_name, channel_name, line):
     just has to say what we do and get out of the way.
     """
     subject = f"A Roblox game built for {channel_name}"
+    # Roughly one line in six is rejected by validation and sends empty, so the
+    # gap has to close rather than leave a visible hole under the greeting.
+    personal = f"{line}\n\n" if line else ""
     body = (
         f"Hey {first_name},\n\n"
-        f"{line}\n\n"
+        f"{personal}"
         "We build Roblox games for creators, end to end — "
         f"{PORTFOLIO_URL}\n\n"
         "Worth a quick chat?\n\n"
