@@ -112,10 +112,15 @@ REVIEW_LABEL = "Outreach/Review"
 
 
 def _footer():
-    return (
-        f"—\n{STUDIO_NAME} · {STUDIO_ADDRESS}\n"
-        "Reply 'unsubscribe' and I won't email again."
-    )
+    """Sign-off plus the opt-out.
+
+    STUDIO_ADDRESS is optional by choice. CAN-SPAM (and German UWG) expect a
+    physical mailing address in commercial email; leaving it unset is a
+    deliberate decision, so the footer degrades cleanly rather than printing an
+    empty separator. Set STUDIO_ADDRESS and it reappears automatically.
+    """
+    who = f"{STUDIO_NAME} · {STUDIO_ADDRESS}" if STUDIO_ADDRESS.strip() else STUDIO_NAME
+    return f"—\n{who}\nReply 'unsubscribe' and I won't email again."
 
 
 # --- sending preflight ------------------------------------------------------
@@ -146,14 +151,16 @@ def sending_config_problems():
     problems = []
     if _looks_unset(FROM_NAME):
         problems.append("FROM_NAME is empty or a placeholder")
-    if _looks_unset(STUDIO_ADDRESS):
-        problems.append(
-            "STUDIO_ADDRESS is empty or a placeholder — this is the CAN-SPAM "
-            "postal address and appears in every email footer")
+    # STUDIO_ADDRESS is deliberately NOT required — see _footer(). It's still
+    # checked for placeholder text, because a footer reading "your real postal
+    # address here" is worse than no address at all.
+    if STUDIO_ADDRESS.strip() and _looks_unset(STUDIO_ADDRESS):
+        problems.append("STUDIO_ADDRESS is set to a placeholder — clear it or "
+                        "set a real address")
     if _looks_unset(PORTFOLIO_URL):
         problems.append(
-            "PORTFOLIO_URL is empty or a placeholder — it appears in the "
-            "opener as 'A few we've shipped: ...'")
+            "PORTFOLIO_URL is empty or a placeholder — it's the website link "
+            "in every opener")
     return problems
 
 
@@ -171,8 +178,8 @@ def opener(first_name, channel_name, line):
     body = (
         f"Hey {first_name},\n\n"
         f"{line}\n\n"
-        "We build Roblox games for creators, end to end. "
-        f"A few we've shipped: {PORTFOLIO_URL}\n\n"
+        "We build Roblox games for creators, end to end — "
+        f"{PORTFOLIO_URL}\n\n"
         "Worth a quick chat?\n\n"
         f"{FROM_NAME}, {STUDIO_NAME}\n\n"
         f"{_footer()}"
@@ -183,7 +190,7 @@ def opener(first_name, channel_name, line):
 def followup_1(first_name, channel_name, line):
     body = (
         f"Hey {first_name},\n\n"
-        f"Following up — did the portfolio land? {PORTFOLIO_URL}\n\n"
+        f"Following up — did the site land? {PORTFOLIO_URL}\n\n"
         f"Happy to sketch a rough game concept that fits {channel_name} "
         "specifically, no cost. Want me to put one together?\n\n"
         f"best,\n{FROM_NAME}\n\n"

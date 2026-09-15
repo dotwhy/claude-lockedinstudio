@@ -224,12 +224,11 @@ def test_placeholder_portfolio_is_caught(monkeypatch):
 
 
 def test_placeholder_address_is_caught(monkeypatch):
+    # An address is optional, but a placeholder one is never intentional.
     monkeypatch.setattr(config, "FROM_NAME", "Laurenz")
     monkeypatch.setattr(config, "STUDIO_ADDRESS", "your real postal address here")
     monkeypatch.setattr(config, "PORTFOLIO_URL", "https://lockedin.studio/work")
-    problems = config.sending_config_problems()
-    assert any("STUDIO_ADDRESS" in p for p in problems)
-    assert any("CAN-SPAM" in p for p in problems)
+    assert any("STUDIO_ADDRESS" in p for p in config.sending_config_problems())
 
 
 def test_env_example_style_placeholders_are_caught(monkeypatch):
@@ -240,10 +239,14 @@ def test_env_example_style_placeholders_are_caught(monkeypatch):
 
 
 def test_empty_values_are_caught(monkeypatch):
+    # An empty address is a deliberate choice and must NOT block sending; an
+    # empty name or website is always a mistake.
     monkeypatch.setattr(config, "FROM_NAME", "")
     monkeypatch.setattr(config, "STUDIO_ADDRESS", "   ")
     monkeypatch.setattr(config, "PORTFOLIO_URL", None)
-    assert len(config.sending_config_problems()) == 3
+    problems = config.sending_config_problems()
+    assert len(problems) == 2
+    assert not any("STUDIO_ADDRESS" in p for p in problems)
 
 
 def test_real_values_pass(monkeypatch):
@@ -266,3 +269,42 @@ def test_send_paths_proceed_when_config_is_real(monkeypatch):
     monkeypatch.setattr(config, "STUDIO_ADDRESS", "Musterstr 1, 10115 Berlin, Germany")
     monkeypatch.setattr(config, "PORTFOLIO_URL", "https://lockedin.studio/work")
     assert engine._preflight_blocked("test") is False
+
+
+# --- footer without a postal address ----------------------------------------
+def test_footer_omits_the_address_when_unset(monkeypatch):
+    # Deliberately optional. It must degrade cleanly, not print a dangling
+    # separator where the address used to be.
+    monkeypatch.setattr(config, "STUDIO_ADDRESS", "")
+    _, body = config.opener("Sammy", "SammyGames", "a line")
+    assert "LockedIn Studio\nReply 'unsubscribe'" in body
+    assert "·" not in body.split("—")[-1]
+
+
+def test_footer_includes_the_address_when_set(monkeypatch):
+    monkeypatch.setattr(config, "STUDIO_ADDRESS", "Musterstr 1, Berlin")
+    _, body = config.opener("Sammy", "SammyGames", "a line")
+    assert "LockedIn Studio · Musterstr 1, Berlin" in body
+
+
+def test_unsubscribe_survives_without_an_address(monkeypatch):
+    # The opt-out is not optional, whatever happens to the address.
+    monkeypatch.setattr(config, "STUDIO_ADDRESS", "")
+    for tmpl in (config.opener, config.followup_1, config.followup_2, config.retouch):
+        _, body = tmpl("Sammy", "SammyGames", "a line")
+        assert "unsubscribe" in body.lower()
+
+
+def test_empty_address_does_not_block_sending(monkeypatch):
+    monkeypatch.setattr(config, "FROM_NAME", "Laurenz")
+    monkeypatch.setattr(config, "STUDIO_ADDRESS", "")
+    monkeypatch.setattr(config, "PORTFOLIO_URL", "www.lockedinstudio.com")
+    assert config.sending_config_problems() == []
+
+
+def test_placeholder_address_still_blocks(monkeypatch):
+    # Blank is a choice; "your real postal address here" is a mistake.
+    monkeypatch.setattr(config, "FROM_NAME", "Laurenz")
+    monkeypatch.setattr(config, "STUDIO_ADDRESS", "your real postal address here")
+    monkeypatch.setattr(config, "PORTFOLIO_URL", "www.lockedinstudio.com")
+    assert any("STUDIO_ADDRESS" in p for p in config.sending_config_problems())
