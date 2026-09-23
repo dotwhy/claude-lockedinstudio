@@ -66,6 +66,10 @@ class Handler(BaseHTTPRequestHandler):
                 # Placeholder config already reached two real creators. If
                 # this list is non-empty, every send path refuses.
                 "config_problems": __import__("copy_audit").audit(),
+                # Did each job actually fire? Without this, a job that
+                # stopped running looks identical to one finding nothing.
+                "jobs": db.job_history(),
+                "recent_failures": db.recent_failures(5),
                 "prep": db.prep_progress(),
                 "discovery": db.discovery_progress(),
             })
@@ -309,6 +313,7 @@ JOBS = {
     "personalize": lambda: __import__("personalize").run(),
     "revalidate": lambda: __import__("personalize").revalidate_stored(),
     "audit": lambda: __import__("copy_audit").report(),
+    "health": lambda: __import__("health").run(always_email=True),
     "send": lambda: __import__("engine").send_due(),
     "replies": lambda: __import__("engine").process_replies(),
     "candidates": lambda: __import__("engine").send_candidate_digest(),

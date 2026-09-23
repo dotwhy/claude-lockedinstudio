@@ -138,6 +138,20 @@ def init():
             updated_at TEXT
         );
 
+        -- One row per scheduled job run. Without this there is no way to tell
+        -- a job that ran and found nothing from a job that never fired — which
+        -- is exactly how a missed weekly digest went unnoticed for a week.
+        CREATE TABLE IF NOT EXISTS job_runs (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            job        TEXT,
+            outcome    TEXT,      -- 'ok' | 'failed'
+            detail     TEXT,      -- return value, or the exception
+            duration_s REAL,
+            ran_at     TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_job_runs_job ON job_runs (job, ran_at);
+
         CREATE INDEX IF NOT EXISTS idx_candidates_promotable
             ON candidates (growth_signal, promoted_at);
         CREATE INDEX IF NOT EXISTS idx_snapshots_channel
@@ -705,6 +719,63 @@ def promote_candidate(candidate):
     conn.commit()
     conn.close()
     return created
+
+
+def record_job_run(job, outcome, detail=None, duration_s=None):
+    """Log that a scheduled job ran, and how it went."""
+    conn = connect()
+    conn.execute(
+        "INSERT INTO job_runs (job, outcome, detail, duration_s, ran_at) "
+        "VALUES (?,?,?,?,?)",
+        (job, outcome, (str(detail)[:500] if detail is not None else None),
+         duration_s, _now()),
+    )
+    # Keep the table small: a year of runs is plenty to spot a pattern.
+    conn.execute(
+        "DELETE FROM job_runs WHERE id NOT IN "
+        "(SELECT id FROM job_runs ORDER BY ran_at DESC LIMIT 2000)"
+    )
+    conn.commit()
+    conn.close()
+
+
+def job_history():
+    """Last run of every job that has ever run, newest first.
+
+    Answers the question that cost a week: did this job fire at all?
+    """
+    conn = connect()
+    rows = conn.execute(
+        """SELECT job, outcome, detail, duration_s, ran_at FROM job_runs
+           WHERE id IN (SELECT MAX(id) FROM job_runs GROUP BY job)
+           ORDER BY ran_at DESC"""
+    ).fetchall()
+    conn.close()
+    out = []
+    now = datetime.now(timezone.utc)
+    for row in rows:
+        try:
+            age_h = (now - datetime.fromisoformat(row["ran_at"])).total_seconds() / 3600
+        except ValueError:
+            age_h = None
+        out.append({
+            "job": row["job"],
+            "outcome": row["outcome"],
+            "detail": row["detail"],
+            "last_run": row["ran_at"],
+            "hours_ago": round(age_h, 1) if age_h is not None else None,
+        })
+    return out
+
+
+def recent_failures(limit=10):
+    conn = connect()
+    rows = conn.execute(
+        "SELECT job, detail, ran_at FROM job_runs WHERE outcome='failed' "
+        "ORDER BY ran_at DESC LIMIT ?", (limit,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def prep_progress():

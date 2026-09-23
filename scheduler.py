@@ -10,6 +10,7 @@ review and send those yourself.
 Times are UTC (Railway runs UTC). Adjust the hours to your timezone.
 """
 import logging
+import time
 import traceback
 
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -22,15 +23,40 @@ log = logging.getLogger("scheduler")
 
 
 def safe(fn, name):
-    """Run a job, logging any exception instead of crashing the scheduler."""
+    """Run a job, record that it ran, and never let it kill the scheduler.
+
+    Recording matters as much as the try/except. Logs live in a console nobody
+    watches, so a job that silently stops firing looks exactly like a job that
+    runs and finds nothing — that is how a missed weekly digest went unnoticed
+    for a week.
+    """
     def wrapped():
+        import db
         log.info(f"[{name}] start (DRY_RUN={config.DRY_RUN})")
+        started = time.monotonic()
         try:
-            fn()
-            log.info(f"[{name}] done")
+            result = fn()
+            elapsed = time.monotonic() - started
+            log.info(f"[{name}] done in {elapsed:.1f}s -> {result}")
+            db.record_job_run(name, "ok", result, elapsed)
         except Exception:
-            log.error(f"[{name}] FAILED\n{traceback.format_exc()}")
+            elapsed = time.monotonic() - started
+            trace = traceback.format_exc()
+            log.error(f"[{name}] FAILED\n{trace}")
+            try:
+                db.record_job_run(name, "failed", trace.strip().splitlines()[-1], elapsed)
+            except Exception:
+                log.error(f"[{name}] could not record the failure")
     return wrapped
+
+
+# APScheduler's default misfire_grace_time is ONE SECOND: if the worker is busy
+# or restarting at the exact moment a job is due, the run is silently dropped.
+# For the weekly jobs that means waiting another seven days for a digest that
+# should have arrived on Monday.
+#
+# An hour of grace, with coalesce so a backlog runs once rather than N times.
+JOB_DEFAULTS = {"misfire_grace_time": 3600, "coalesce": True, "max_instances": 1}
 
 
 def main():
@@ -39,6 +65,7 @@ def main():
     import personalize
     import content
     import youtube_sourcing
+    import health
     import api
 
     db.init()
@@ -49,7 +76,7 @@ def main():
     else:
         log.warning("API not started (no API_KEY). Scheduled jobs still run.")
 
-    sched = BlockingScheduler(timezone="UTC")
+    sched = BlockingScheduler(timezone="UTC", job_defaults=JOB_DEFAULTS)
 
     # Outreach loop: personalize new prospects, send due steps, process replies.
     sched.add_job(safe(lambda: (personalize.run(), engine.send_due(), engine.process_replies()),
@@ -90,6 +117,11 @@ def main():
     # the sequence by Monday evening instead of waiting a week.
     sched.add_job(safe(engine.process_digest_replies, "digest-replies"),
                   CronTrigger(day_of_week="mon-fri", hour="9,14,18"), name="digest-replies")
+
+    # Daily self-check. Emails only when something is wrong, plus a Monday
+    # check-in so that silence never becomes ambiguous.
+    sched.add_job(safe(health.run, "health"),
+                  CronTrigger(hour=7, minute=45), name="health")
 
     # Long loop: re-touch parked prospects whose ~90-day wait is up. Runs the
     # normal (non-force) pass; the one-time re-enroll is `run.py retouch --now`.
