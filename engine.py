@@ -201,7 +201,7 @@ def send_candidate_digest():
         to=gmail_client.address(), subject=DIGEST_SUBJECT, body=body
     )
     db.mark_candidates_asked([r["channel_id"] for r in rows])
-    db.record_digest_thread(thread_id)
+    db.record_digest_thread(thread_id, gmail_id)
     print(f"Digest of {len(rows)} candidate(s) sent to yourself.")
     return len(rows)
 
@@ -247,7 +247,9 @@ def process_digest_replies():
         print("No digest thread on record. Nothing to read.")
         return 0
 
-    text, _ = gmail_client.latest_inbound(thread_id, 0)
+    # NOT latest_inbound: the digest is self-to-self, so your reply is "from
+    # us" and that function would skip it. Exclude our own messages by id.
+    text, _ = gmail_client.latest_in_thread(thread_id, db.digest_message_ids())
     if not text:
         print("No reply to the digest yet.")
         return 0
@@ -294,8 +296,8 @@ def _confirm_digest_reply(thread_id, matched, unmatched, unparsed, promoted):
     if not lines:
         lines.append("I couldn't find any addresses in that reply.\n\n" + _DIGEST_HELP)
 
-    gmail_client.send(to=gmail_client.address(), subject=None,
-                      body="\n".join(lines), thread_id=thread_id)
+    _, _, _ = gmail_client.send(to=gmail_client.address(), subject=None,
+                                body="\n".join(lines), thread_id=thread_id)
 
 
 def retouch_due(force=False):

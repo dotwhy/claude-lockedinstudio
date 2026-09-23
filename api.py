@@ -323,14 +323,28 @@ JOBS = {
 
 
 def _run_safely(name, runner):
+    """Run a job triggered over HTTP, recording it exactly like a scheduled one.
+
+    Without this the job history has holes: a job run by hand would leave no
+    trace, and the health check would report it as never having run.
+    """
+    import time
     log = logging.getLogger("api")
     log.info(f"[run/{name}] started")
+    started = time.monotonic()
     try:
         db.init()
         result = runner()
+        elapsed = time.monotonic() - started
         log.info(f"[run/{name}] done: {result}")
-    except Exception:
+        db.record_job_run(name, "ok", result, elapsed)
+    except Exception as exc:
+        elapsed = time.monotonic() - started
         log.exception(f"[run/{name}] FAILED")
+        try:
+            db.record_job_run(name, "failed", repr(exc), elapsed)
+        except Exception:
+            log.error(f"[run/{name}] could not record the failure")
 
 
 def start(port=None):

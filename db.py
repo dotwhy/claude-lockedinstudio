@@ -957,14 +957,27 @@ def get_meta(key):
     return row["value"] if row else None
 
 
-def record_digest_thread(thread_id):
-    """Remember where the last digest went, so the reply reader can find it."""
+def record_digest_thread(thread_id, message_id=None):
+    """Remember where the last digest went, and which message it was.
+
+    The message id matters because the digest thread is self-to-self: the only
+    way to tell your reply from our original is to exclude ours by id.
+    """
     if thread_id:
         set_meta("digest_thread_id", thread_id)
+    if message_id:
+        seen = [i for i in (get_meta("digest_message_ids") or "").split(",") if i]
+        seen.append(message_id)
+        set_meta("digest_message_ids", ",".join(seen[-20:]))
 
 
 def latest_digest_thread():
     return get_meta("digest_thread_id")
+
+
+def digest_message_ids():
+    """Messages WE sent in the digest thread; anything else is your reply."""
+    return [i for i in (get_meta("digest_message_ids") or "").split(",") if i]
 
 
 def candidate_by_name(name):

@@ -117,6 +117,29 @@ def latest_inbound(thread_id, after_ms):
     return None, None
 
 
+def latest_in_thread(thread_id, exclude_ids=()):
+    """Newest message in a thread REGARDLESS of who sent it.
+
+    `latest_inbound` deliberately skips anything we sent, which is right for a
+    prospect thread. The digest thread is the opposite case: it goes from you
+    to yourself, so your reply is also "from us" and that filter drops the one
+    message we actually need. Exclusion is by message id instead — we know
+    exactly which message was the digest, because we recorded it when sending.
+    """
+    thread = service().users().threads().get(
+        userId="me", id=thread_id, format="full").execute()
+    best = None
+    for m in thread.get("messages", []):
+        if m["id"] in exclude_ids:
+            continue
+        internal = int(m.get("internalDate", 0))
+        if best is None or internal > best[0]:
+            best = (internal, _extract_text(m["payload"]), m["id"])
+    if best:
+        return (best[1] or "").strip(), best[2]
+    return None, None
+
+
 def _label_id(name):
     """Find or create a label by name, return its id."""
     svc = service()

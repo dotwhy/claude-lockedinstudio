@@ -27,6 +27,9 @@ class FakeGmail:
     def latest_inbound(self, thread_id, after_ms):
         return (self._inbound, "<in-id>") if self._inbound else (None, None)
 
+    def latest_in_thread(self, thread_id, exclude_ids=()):
+        return (self._inbound, "<in-id>") if self._inbound else (None, None)
+
     def flag_thread(self, thread_id):
         pass
 
@@ -259,3 +262,40 @@ def test_suppressed_address_from_a_reply_is_not_promoted(env, monkeypatch):
 
     engine.process_digest_replies()
     assert db.prospects_by_status("new") == []
+
+
+# --- the self-thread bug ----------------------------------------------------
+def test_digest_records_which_message_was_ours(env, monkeypatch):
+    # The digest goes from you to yourself, so sender alone can't distinguish
+    # our message from your reply. The id can.
+    db, engine, _ = env
+    growing(db, "UC1", "SammyGames", 80_000)
+    monkeypatch.setattr(engine, "gmail_client", FakeGmail())
+    engine.send_candidate_digest()
+    assert db.digest_message_ids() == ["gmail-id"]
+
+
+def test_our_own_digest_is_excluded_when_reading_replies(env, monkeypatch):
+    db, engine, _ = env
+    growing(db, "UC1", "SammyGames", 80_000)
+    fake = FakeGmail(inbound="SammyGames: sammy@business.com")
+    monkeypatch.setattr(engine, "gmail_client", fake)
+    engine.send_candidate_digest()
+
+    seen = {}
+    original = fake.latest_in_thread
+
+    def spy(thread_id, exclude_ids=()):
+        seen["excluded"] = list(exclude_ids)
+        return original(thread_id, exclude_ids)
+
+    fake.latest_in_thread = spy
+    engine.process_digest_replies()
+    assert "gmail-id" in seen["excluded"]
+
+
+def test_digest_message_ids_do_not_grow_without_bound(env, monkeypatch):
+    db, engine, _ = env
+    for i in range(30):
+        db.record_digest_thread("thread-1", f"msg-{i}")
+    assert len(db.digest_message_ids()) <= 20
