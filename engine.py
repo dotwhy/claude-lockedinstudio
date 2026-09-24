@@ -181,14 +181,23 @@ _DIGEST_HELP = (
 
 
 def send_candidate_digest():
-    """Ask you, once a week, for the addresses the scraper couldn't find."""
-    rows = db.candidates_needing_email(config.CANDIDATE_REASK_DAYS)
+    """Ask you, daily, for a handful of the addresses we couldn't find.
+
+    Deliberately a small batch rather than the whole queue: you can only source
+    so many addresses a day, so asking for everything at once produces the same
+    result as asking for nothing.
+    """
+    rows = db.candidates_needing_email(config.CANDIDATE_REASK_DAYS,
+                                       limit=config.CANDIDATE_BATCH_SIZE)
     if not rows:
         print("No candidates need an email. No digest sent.")
         return 0
 
-    lines = [f"{len(rows)} channel{'s' if len(rows) != 1 else ''} worth contacting, "
-             "but I couldn't find an address for them:\n"]
+    waiting = db.candidates_waiting_count(config.CANDIDATE_REASK_DAYS)
+    remaining = max(waiting - len(rows), 0)
+    header = (f"{len(rows)} channel{'s' if len(rows) != 1 else ''} to find an "
+              "address for today:")
+    lines = [header, ""]
     for row in rows:
         subs = f"{row['subscriber_count']:,}" if row["subscriber_count"] else "?"
         if row["fast_track"]:
@@ -199,6 +208,9 @@ def send_candidate_digest():
             why = "growing"
         lines.append(f"• {row['channel_name']} ({subs} subs, {why})\n"
                      f"    {row['profile_url'] or ''}")
+    if remaining:
+        lines.append(f"\n{remaining} more are queued — I'll ask about the next "
+                     "batch tomorrow, so there's no need to do them all at once.")
     lines.append("\n" + _DIGEST_HELP)
 
     body = "\n".join(lines)

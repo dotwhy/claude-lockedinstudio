@@ -109,8 +109,11 @@ def main():
                   CronTrigger(day_of_week="mon", hour=7, minute=0), name="snapshot")
     sched.add_job(safe(youtube_sourcing.promote_growing, "promote"),
                   CronTrigger(day_of_week="mon", hour=7, minute=30), name="promote")
+    # Daily, not weekly: you can only source a few addresses a day, so a small
+    # batch every morning drains the queue far faster than one weekly dump that
+    # is too big to act on.
     sched.add_job(safe(engine.send_candidate_digest, "candidate-digest"),
-                  CronTrigger(day_of_week="mon", hour=8, minute=0), name="candidate-digest")
+                  CronTrigger(hour=8, minute=0), name="candidate-digest")
 
     # Your reply to the digest lands whenever it lands. Checked a few times a
     # day rather than weekly, so an address you send on Monday afternoon is in

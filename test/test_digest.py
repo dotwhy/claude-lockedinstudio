@@ -61,8 +61,10 @@ def test_empty_queue_sends_nothing(env, monkeypatch):
     assert fake.sent == []
 
 
-def test_digest_lists_every_channel_in_one_email(env, monkeypatch):
-    db, engine, _ = env
+def test_the_whole_batch_arrives_in_one_email(env, monkeypatch):
+    # One email per batch, never one email per channel.
+    db, engine, cfg = env
+    monkeypatch.setattr(cfg, "CANDIDATE_BATCH_SIZE", 12)
     for i in range(12):
         growing(db, f"UC{i}", f"Channel{i}", 50_000 + i)
     fake = FakeGmail()
@@ -358,3 +360,100 @@ def test_prose_is_still_not_reported(env):
     _, engine, _ = env
     pairs, unparsed = engine._parse_digest_reply("here you go, thanks")
     assert pairs == [] and unparsed == []
+
+
+# --- daily batch instead of one weekly dump ---------------------------------
+def test_digest_asks_for_a_batch_not_everything(env, monkeypatch):
+    # 45 channels at once is functionally zero: you do a handful and the rest
+    # scroll away.
+    db, engine, cfg = env
+    monkeypatch.setattr(cfg, "CANDIDATE_BATCH_SIZE", 8)
+    for i in range(45):
+        growing(db, f"UC{i}", f"Ch{i}", 50_000 + i)
+    fake = FakeGmail()
+    monkeypatch.setattr(engine, "gmail_client", fake)
+
+    assert engine.send_candidate_digest() == 8
+
+
+def test_digest_says_how_many_are_left(env, monkeypatch):
+    db, engine, cfg = env
+    monkeypatch.setattr(cfg, "CANDIDATE_BATCH_SIZE", 8)
+    for i in range(45):
+        growing(db, f"UC{i}", f"Ch{i}", 50_000 + i)
+    fake = FakeGmail()
+    monkeypatch.setattr(engine, "gmail_client", fake)
+    engine.send_candidate_digest()
+
+    body = fake.sent[0]["body"]
+    assert "37 more are queued" in body
+    assert "tomorrow" in body
+
+
+def test_tomorrows_batch_is_a_different_set(env, monkeypatch):
+    # The whole point of "nudge me again tomorrow": the next batch must be the
+    # ones we haven't asked about yet.
+    db, engine, cfg = env
+    monkeypatch.setattr(cfg, "CANDIDATE_BATCH_SIZE", 5)
+    for i in range(20):
+        growing(db, f"UC{i}", f"Ch{i}", 50_000 + i)
+    fake = FakeGmail()
+    monkeypatch.setattr(engine, "gmail_client", fake)
+
+    engine.send_candidate_digest()
+    first = fake.sent[0]["body"]
+    engine.send_candidate_digest()
+    second = fake.sent[1]["body"]
+
+    asked_first = {f"Ch{i}" for i in range(20) if f"Ch{i}\n" in first or f"Ch{i} " in first}
+    asked_second = {f"Ch{i}" for i in range(20) if f"Ch{i}\n" in second or f"Ch{i} " in second}
+    assert asked_first and asked_second
+    assert not (asked_first & asked_second), "the same channels were asked twice"
+
+
+def test_no_remaining_note_when_the_queue_fits(env, monkeypatch):
+    db, engine, cfg = env
+    monkeypatch.setattr(cfg, "CANDIDATE_BATCH_SIZE", 8)
+    growing(db, "UC1", "OnlyOne", 80_000)
+    fake = FakeGmail()
+    monkeypatch.setattr(engine, "gmail_client", fake)
+    engine.send_candidate_digest()
+    assert "more are queued" not in fake.sent[0]["body"]
+
+
+# --- forgiving name matching ------------------------------------------------
+def test_matching_tolerates_a_partial_name(env):
+    # Channel names are full of emoji and spacing nobody retypes exactly, and a
+    # near-miss silently dropping a hand-sourced address is the worst outcome.
+    db, _, _ = env
+    db.upsert_candidate("UC1", "SammyGames HD ✨", 80_000)
+    assert db.candidate_by_name("SammyGames")["channel_id"] == "UC1"
+
+
+def test_matching_tolerates_extra_words(env):
+    db, _, _ = env
+    db.upsert_candidate("UC1", "SammyGames", 80_000)
+    assert db.candidate_by_name("SammyGames HD")["channel_id"] == "UC1"
+
+
+def test_exact_match_wins_over_partial(env):
+    db, _, _ = env
+    db.upsert_candidate("UC1", "Blox", 80_000)
+    db.upsert_candidate("UC2", "BloxKing", 90_000)
+    assert db.candidate_by_name("Blox")["channel_id"] == "UC1"
+
+
+def test_ambiguous_partial_match_is_refused(env):
+    # Guessing between two channels would attach your address to the wrong one.
+    db, _, _ = env
+    db.upsert_candidate("UC1", "BloxKingOne", 80_000)
+    db.upsert_candidate("UC2", "BloxKingTwo", 90_000)
+    assert db.candidate_by_name("BloxKing") is None
+
+
+def test_already_promoted_channels_are_not_matched(env):
+    db, _, _ = env
+    db.upsert_candidate("UC1", "SammyGames", 80_000, fast_track=True)
+    db.set_candidate_email("UC1", "a@b.com")
+    db.promote_candidate(db.candidates_to_promote()[0])
+    assert db.candidate_by_name("SammyGames") is None

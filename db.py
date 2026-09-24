@@ -658,7 +658,18 @@ def candidates_to_promote():
     return rows
 
 
-def candidates_needing_email(reask_after_days=30):
+def candidates_waiting_count(reask_after_days=30):
+    """How many actionable channels still have no address, asked or not."""
+    conn = connect()
+    n = conn.execute(
+        f"SELECT COUNT(*) FROM candidates WHERE {_ACTIONABLE} "
+        "AND email IS NULL AND promoted_at IS NULL"
+    ).fetchone()[0]
+    conn.close()
+    return n
+
+
+def candidates_needing_email(reask_after_days=30, limit=None):
     """Actionable channels with no email, that we haven't recently asked about.
 
     The asked_at gate is what stops the weekly digest from listing the same 12
@@ -667,16 +678,24 @@ def candidates_needing_email(reask_after_days=30):
 
     Fast-tracked channels sort first: they're the biggest and they're not
     waiting on a growth signal, so they're the ones worth your time chasing.
+
+    `limit` keeps the daily ask to a size you can actually act on. Sourcing
+    addresses is rate-limited on your side, so a list of 45 is functionally the
+    same as a list of zero — you work through a handful and the rest scroll
+    away. Small batch, every day, beats everything at once.
     """
     conn = connect()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=reask_after_days)).isoformat()
-    rows = conn.execute(
-        f"SELECT * FROM candidates WHERE {_ACTIONABLE} "
-        "AND email IS NULL AND promoted_at IS NULL "
-        "AND (asked_at IS NULL OR asked_at <= ?) "
-        "ORDER BY fast_track DESC, subscriber_count DESC",
-        (cutoff,),
-    ).fetchall()
+    sql = (f"SELECT * FROM candidates WHERE {_ACTIONABLE} "
+           "AND email IS NULL AND promoted_at IS NULL "
+           "AND (asked_at IS NULL OR asked_at <= ?) "
+           # Never-asked first, then longest-waiting, then biggest.
+           "ORDER BY (asked_at IS NOT NULL), fast_track DESC, subscriber_count DESC")
+    params = [cutoff]
+    if limit:
+        sql += " LIMIT ?"
+        params.append(int(limit))
+    rows = conn.execute(sql, params).fetchall()
     conn.close()
     return rows
 
@@ -981,18 +1000,34 @@ def digest_message_ids():
 
 
 def candidate_by_name(name):
-    """Find an unpromoted candidate by channel name, case-insensitively.
+    """Find an unpromoted candidate by channel name.
 
-    Used by the digest reply parser, where you type the channel name back at us
-    and we have to match it to a row.
+    Used by the digest reply parser, where you retype a channel name from the
+    digest and it has to match a row. Exact match is tried first; failing that,
+    a unique partial match, because channel names are full of emoji, spacing
+    and casing that nobody retypes precisely — and a near-miss silently
+    dropping an address you sourced by hand is the worst outcome here.
+
+    Returns None when nothing matches, or when a partial match is ambiguous —
+    guessing between two channels would attach your address to the wrong one.
     """
-    if not name:
+    if not name or not name.strip():
         return None
+    cleaned = name.strip()
     conn = connect()
-    row = conn.execute(
-        "SELECT * FROM candidates WHERE lower(channel_name)=lower(?) "
-        "AND promoted_at IS NULL",
-        (name.strip(),),
-    ).fetchone()
-    conn.close()
-    return row
+    try:
+        exact = conn.execute(
+            "SELECT * FROM candidates WHERE lower(channel_name)=lower(?) "
+            "AND promoted_at IS NULL", (cleaned,),
+        ).fetchone()
+        if exact:
+            return exact
+        partial = conn.execute(
+            "SELECT * FROM candidates WHERE promoted_at IS NULL "
+            "AND (lower(channel_name) LIKE lower(?) OR lower(?) LIKE "
+            "     '%' || lower(channel_name) || '%')",
+            (f"%{cleaned}%", cleaned),
+        ).fetchall()
+        return partial[0] if len(partial) == 1 else None
+    finally:
+        conn.close()

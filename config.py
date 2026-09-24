@@ -32,8 +32,14 @@ API_PORT = _int("PORT", 8080)  # Railway injects PORT
 # smooth a viral spike and short enough to catch momentum while it's live.
 GROWTH_WINDOW_DAYS = _int("GROWTH_WINDOW_DAYS", 30)
 
-# How long before the weekly digest re-asks about a channel you never resolved.
+# How long before the digest re-asks about a channel you never resolved.
 CANDIDATE_REASK_DAYS = _int("CANDIDATE_REASK_DAYS", 30)
+
+# How many channels the daily nudge asks about at once. Sourcing addresses is
+# rate-limited on your side, so a list of 45 is functionally a list of zero:
+# you do a handful and the rest scroll away. A small batch every day is work
+# you can actually finish, and the queue still drains faster than weekly.
+CANDIDATE_BATCH_SIZE = _int("CANDIDATE_BATCH_SIZE", 8)
 
 # Snapshots resolve channels by id through channels.list (~1 unit per 50 ids).
 # Rows with no stored channel_id fall back to search.list, which costs 100 units
