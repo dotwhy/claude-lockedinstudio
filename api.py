@@ -318,6 +318,7 @@ JOBS = {
     "send": lambda: __import__("engine").send_due(),
     "replies": lambda: __import__("engine").process_replies(),
     "candidates": lambda: __import__("engine").send_candidate_digest(),
+    "reopen-queue": lambda: __import__("db").reopen_candidate_queue(),
     "digest-replies": lambda: __import__("engine").process_digest_replies(),
     "retouch-now": _job_retouch_now,
 }

@@ -457,3 +457,35 @@ def test_already_promoted_channels_are_not_matched(env):
     db.set_candidate_email("UC1", "a@b.com")
     db.promote_candidate(db.candidates_to_promote()[0])
     assert db.candidate_by_name("SammyGames") is None
+
+
+# --- recovering from a bulk ask ---------------------------------------------
+def test_reopening_the_queue_puts_unresolved_channels_back(env, monkeypatch):
+    # A single bulk ask stamped all 45 at once, so every one sat inside its
+    # re-ask window and the daily batch had nothing to send for a month.
+    db, engine, cfg = env
+    monkeypatch.setattr(cfg, "CANDIDATE_BATCH_SIZE", 8)
+    for i in range(20):
+        growing(db, f"UC{i}", f"Ch{i}", 80_000)
+    db.mark_candidates_asked([f"UC{i}" for i in range(20)])
+    assert db.candidates_needing_email(14, limit=8) == []
+
+    assert db.reopen_candidate_queue() == 20
+    assert len(db.candidates_needing_email(14, limit=8)) == 8
+
+
+def test_reopening_does_not_disturb_resolved_channels(env):
+    db, _, _ = env
+    growing(db, "UC1", "Resolved", 80_000)
+    db.set_candidate_email("UC1", "a@b.com")
+    db.mark_candidates_asked(["UC1"])
+    assert db.reopen_candidate_queue() == 0
+
+
+def test_reopening_skips_promoted_channels(env):
+    db, _, _ = env
+    db.upsert_candidate("UC1", "Promoted", 80_000, fast_track=True)
+    db.set_candidate_email("UC1", "a@b.com")
+    db.promote_candidate(db.candidates_to_promote()[0])
+    db.mark_candidates_asked(["UC1"])
+    assert db.reopen_candidate_queue() == 0

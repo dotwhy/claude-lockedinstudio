@@ -700,6 +700,25 @@ def candidates_needing_email(reask_after_days=30, limit=None):
     return rows
 
 
+def reopen_candidate_queue():
+    """Clear the 'asked' stamp from channels that still have no address.
+
+    Needed when a single bulk ask stamped the whole queue at once: every
+    channel then sits inside its re-ask window and the daily batch has nothing
+    to send, even though dozens still need an address. Clearing the stamp puts
+    them back in rotation without touching anything already resolved.
+    """
+    conn = connect()
+    n = conn.execute(
+        "UPDATE candidates SET asked_at=NULL, updated_at=? "
+        "WHERE asked_at IS NOT NULL AND email IS NULL AND promoted_at IS NULL",
+        (_now(),),
+    ).rowcount
+    conn.commit()
+    conn.close()
+    return max(n, 0)
+
+
 def mark_candidates_asked(channel_ids):
     """Stamp asked_at after a digest goes out, so we don't re-ask next week."""
     if not channel_ids:

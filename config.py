@@ -33,7 +33,9 @@ API_PORT = _int("PORT", 8080)  # Railway injects PORT
 GROWTH_WINDOW_DAYS = _int("GROWTH_WINDOW_DAYS", 30)
 
 # How long before the digest re-asks about a channel you never resolved.
-CANDIDATE_REASK_DAYS = _int("CANDIDATE_REASK_DAYS", 30)
+# Shorter than it was: with a small daily batch, 30 days meant a channel you
+# skipped once disappeared for a month. A fortnight keeps it in rotation.
+CANDIDATE_REASK_DAYS = _int("CANDIDATE_REASK_DAYS", 14)
 
 # How many channels the daily nudge asks about at once. Sourcing addresses is
 # rate-limited on your side, so a list of 45 is functionally a list of zero:
