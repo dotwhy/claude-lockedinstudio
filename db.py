@@ -891,8 +891,16 @@ def discovery_progress():
         "SELECT COUNT(DISTINCT substr(captured_at,1,10)) AS days FROM channel_snapshots"
     ).fetchone()
     conn.close()
+    # Two different numbers, and conflating them hid a real problem: how many
+    # still need an address at all, versus how many the next digest may ask
+    # about (the rest being inside their re-ask window).
+    askable = len(candidates_needing_email(config.CANDIDATE_REASK_DAYS,
+                                           limit=config.CANDIDATE_BATCH_SIZE))
+    waiting = candidates_waiting_count()
     return {
         "candidates": row["total"] or 0,
+        "need_address": waiting,
+        "askable_now": askable,
         "scored": row["scored"] or 0,
         "growing": row["growing"] or 0,
         "fast_track": row["fast_track"] or 0,
