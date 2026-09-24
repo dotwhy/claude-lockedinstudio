@@ -32,6 +32,7 @@ import config
 import db
 import emails
 import growth
+import netretry
 
 log = logging.getLogger("sourcing")
 
@@ -71,9 +72,10 @@ def channels_by_ids(channel_ids, yt=None):
     yt = yt or _client()
     resolved = {}
     for batch in _chunks(list(channel_ids), config.CHANNEL_BATCH_SIZE):
-        response = yt.channels().list(
-            id=",".join(batch), part="snippet,statistics,contentDetails"
-        ).execute()
+        response = netretry.call(
+            yt.channels().list(
+                id=",".join(batch), part="snippet,statistics,contentDetails").execute,
+            what=f"youtube channels.list({len(batch)} ids)")
         for item in response.get("items", []):
             resolved[item["id"]] = _stats(item)
     return resolved
@@ -82,9 +84,10 @@ def channels_by_ids(channel_ids, yt=None):
 def _recent_video_ids(yt, uploads_playlist, limit=5):
     if not uploads_playlist:
         return []
-    response = yt.playlistItems().list(
-        playlistId=uploads_playlist, part="snippet", maxResults=limit
-    ).execute()
+    response = netretry.call(
+        yt.playlistItems().list(
+            playlistId=uploads_playlist, part="snippet", maxResults=limit).execute,
+        what="youtube playlistItems.list")
     return [it["snippet"]["resourceId"]["videoId"] for it in response.get("items", [])]
 
 
@@ -97,9 +100,9 @@ def _recent_videos(yt, uploads_playlist, limit=5):
     video_ids = _recent_video_ids(yt, uploads_playlist, limit)
     if not video_ids:
         return []
-    response = yt.videos().list(
-        id=",".join(video_ids), part="snippet,statistics"
-    ).execute()
+    response = netretry.call(
+        yt.videos().list(id=",".join(video_ids), part="snippet,statistics").execute,
+        what="youtube videos.list")
     videos = []
     for item in response.get("items", []):
         videos.append({
@@ -161,9 +164,10 @@ def discover(max_per_term=25):
     fast_tracked = 0
 
     for term in config.YOUTUBE_SEARCH_TERMS:
-        search = yt.search().list(
-            q=term, type="channel", part="snippet", maxResults=max_per_term
-        ).execute()
+        search = netretry.call(
+            yt.search().list(
+                q=term, type="channel", part="snippet", maxResults=max_per_term).execute,
+            what=f"youtube search.list({term!r})")
         ids = [it["snippet"]["channelId"] for it in search.get("items", [])]
         ids = [c for c in ids if c not in seen]
         seen.update(ids)
@@ -312,7 +316,9 @@ def _find_channel(name, yt=None):
     name but no channel_id. Discovery never needs this.
     """
     yt = yt or _client()
-    res = yt.search().list(q=name, type="channel", part="snippet", maxResults=1).execute()
+    res = netretry.call(
+        yt.search().list(q=name, type="channel", part="snippet", maxResults=1).execute,
+        what=f"youtube search.list({name!r})")
     items = res.get("items", [])
     if not items:
         return None

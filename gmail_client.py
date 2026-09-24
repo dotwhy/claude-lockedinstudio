@@ -14,6 +14,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 import config
+import netretry
 
 _service = None
 _addr = None
@@ -99,7 +100,9 @@ def _extract_text(payload):
 def latest_inbound(thread_id, after_ms):
     """Return (text, message_id) of the newest message in the thread that is
     NOT from us and arrived after `after_ms`. Returns (None, None) if none."""
-    thread = service().users().threads().get(userId="me", id=thread_id, format="full").execute()
+    thread = netretry.call(
+        service().users().threads().get(userId="me", id=thread_id, format="full").execute,
+        what=f"gmail threads.get({thread_id})")
     me = address().lower()
     best = None
     for m in thread.get("messages", []):
@@ -126,8 +129,9 @@ def latest_in_thread(thread_id, exclude_ids=()):
     message we actually need. Exclusion is by message id instead — we know
     exactly which message was the digest, because we recorded it when sending.
     """
-    thread = service().users().threads().get(
-        userId="me", id=thread_id, format="full").execute()
+    thread = netretry.call(
+        service().users().threads().get(userId="me", id=thread_id, format="full").execute,
+        what=f"gmail threads.get({thread_id})")
     best = None
     for m in thread.get("messages", []):
         if m["id"] in exclude_ids:
