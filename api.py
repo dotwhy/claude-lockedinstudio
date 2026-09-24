@@ -314,6 +314,7 @@ JOBS = {
     "revalidate": lambda: __import__("personalize").revalidate_stored(),
     "audit": lambda: __import__("copy_audit").report(),
     "health": lambda: __import__("health").run(always_email=True),
+    "content": lambda: __import__("content").run(),
     "send": lambda: __import__("engine").send_due(),
     "replies": lambda: __import__("engine").process_replies(),
     "candidates": lambda: __import__("engine").send_candidate_digest(),

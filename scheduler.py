@@ -87,9 +87,10 @@ def main():
     sched.add_job(safe(engine.process_replies, "replies"),
                   CronTrigger(day_of_week="mon-fri", hour="10-18"), name="replies")
 
-    # Daily content batch emailed to you for review.
-    sched.add_job(safe(content.run, "content"),
-                  CronTrigger(hour=8, minute=0), name="content")
+    # Content batch is deliberately NOT scheduled. It emailed a batch every
+    # morning whether or not you wanted one, which is exactly the noise this
+    # system is supposed to avoid. Still available as `run.py content` or
+    # POST /run/content when you actually want posts to review.
 
     # End-of-day digest of replies needing your attention.
     sched.add_job(safe(engine.send_digest, "digest"),
@@ -124,7 +125,7 @@ def main():
     # Daily self-check. Emails only when something is wrong, plus a Monday
     # check-in so that silence never becomes ambiguous.
     sched.add_job(safe(health.run, "health"),
-                  CronTrigger(hour=7, minute=45), name="health")
+                  CronTrigger(hour=8, minute=30), name="health")
 
     # Long loop: re-touch parked prospects whose ~90-day wait is up. Runs the
     # normal (non-force) pass; the one-time re-enroll is `run.py retouch --now`.

@@ -142,7 +142,8 @@ def test_a_good_day_reads_as_ok(env):
     _, health, _ = env
     verdict, body = health.build_report()
     assert verdict == "OK"
-    assert body.startswith("Outreach health: OK")
+    assert body.startswith("LockedIn outreach —")
+    assert "No problems" in body
 
 
 def test_problems_appear_at_the_top(env):
@@ -151,7 +152,8 @@ def test_problems_appear_at_the_top(env):
     verdict, body = health.build_report()
     assert "PROBLEM" in verdict
     # The problem must come before the numbers, or it gets skimmed past.
-    assert body.index("✗") < body.index("Sent today")
+    assert body.index("✗") < body.index("PIPELINE")
+    assert "NEEDS ATTENTION" in body
 
 
 def test_report_shows_which_jobs_ran(env):
@@ -165,19 +167,20 @@ def test_report_warns_when_dry_run_is_on(env, monkeypatch):
     _, health, cfg = env
     monkeypatch.setattr(cfg, "DRY_RUN", True)
     _, body = health.build_report()
-    assert "nothing is actually sending" in body
+    assert "DRY_RUN is ON" in body
+    assert "nothing is actually being sent" in body
 
 
-def test_quiet_on_a_healthy_non_monday(env, monkeypatch):
-    # No email on a good day — except the weekly check-in, so that silence
-    # never becomes ambiguous.
+def test_reports_every_day_even_when_healthy(env, monkeypatch):
+    # A status report you only get when something breaks can't tell you the
+    # difference between a quiet day and a dead worker.
     _, health, _ = env
     sent = []
     monkeypatch.setattr(health.gmail_client, "send",
                         lambda **kw: sent.append(kw) or ("i", "t", "m"))
-    monkeypatch.setattr(health, "datetime", _fixed_weekday(2))   # Wednesday
     health.run()
-    assert sent == []
+    assert len(sent) == 1
+    assert "sent" in sent[0]["subject"]
 
 
 def test_emails_when_something_is_wrong(env, monkeypatch):
@@ -186,21 +189,20 @@ def test_emails_when_something_is_wrong(env, monkeypatch):
     sent = []
     monkeypatch.setattr(health.gmail_client, "send",
                         lambda **kw: sent.append(kw) or ("i", "t", "m"))
-    monkeypatch.setattr(health, "datetime", _fixed_weekday(2))
     health.run()
     assert len(sent) == 1
     assert "PROBLEM" in sent[0]["subject"]
 
 
-def test_weekly_checkin_emails_even_when_healthy(env, monkeypatch):
-    _, health, _ = env
+def test_the_subject_carries_the_verdict(env, monkeypatch):
+    # A problem must be visible from the inbox list without opening anything.
+    db, health, _ = env
+    db.record_job_run("snapshot", "failed", "quota exceeded", 1.0)
     sent = []
     monkeypatch.setattr(health.gmail_client, "send",
                         lambda **kw: sent.append(kw) or ("i", "t", "m"))
-    monkeypatch.setattr(health, "datetime", _fixed_weekday(0))   # Monday
     health.run()
-    assert len(sent) == 1
-    assert sent[0]["subject"] == "Outreach health: OK"
+    assert "PROBLEM" in sent[0]["subject"]
 
 
 def _fixed_weekday(weekday):
@@ -213,3 +215,49 @@ def _fixed_weekday(weekday):
             now = real_datetime.now(timezone.utc)
             return now + timedelta(days=(weekday - now.weekday()))
     return Fixed
+
+
+# --- what moved, not just what exists ---------------------------------------
+def test_report_shows_what_actually_went_out(env):
+    # "69 in sequence" reads the same whether twelve people were contacted
+    # yesterday or nobody has been contacted in a month.
+    db, health, _ = env
+    db.upsert_prospect(channel_name="A", email="a@x.com", source="t")
+    p = db.prospects_by_status("new")[0]
+    db.record_send(p, 1, "Subject", "Body", "gid", "tid", "<mid>")
+
+    _, body = health.build_report()
+    assert "LAST 24 HOURS" in body
+    assert "1 opener(s) sent" in body
+
+
+def test_report_shows_a_quiet_day_as_quiet(env):
+    _, health, _ = env
+    _, body = health.build_report()
+    assert "nothing sent, nothing received" in body
+
+
+def test_report_shows_movement_since_the_last_one(env):
+    db, health, _ = env
+    db.upsert_prospect(channel_name="A", email="a@x.com", source="t")
+    db.set_line(db.prospects_by_status("new")[0]["id"], "a line")
+    health.build_report()                      # records the baseline
+
+    db.upsert_prospect(channel_name="B", email="b@x.com", source="t")
+    db.set_line(db.prospects_by_status("new")[0]["id"], "a line")
+    _, body = health.build_report()
+    assert "+1" in body
+
+
+def test_first_report_has_no_deltas_to_show(env):
+    # Nothing to compare against yet — it must not print a misleading +N.
+    _, health, _ = env
+    _, body = health.build_report()
+    assert "+" not in body.split("PIPELINE")[1].split("JOBS")[0]
+
+
+def test_failed_jobs_show_their_error_in_the_report(env):
+    db, health, _ = env
+    db.record_job_run("tick", "failed", "TimeoutError: read timed out", 1.0)
+    _, body = health.build_report()
+    assert "TimeoutError" in body

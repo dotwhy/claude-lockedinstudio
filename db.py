@@ -797,6 +797,57 @@ def recent_failures(limit=10):
     return [dict(r) for r in rows]
 
 
+def activity_since(hours=24):
+    """What actually went out, and what came back, in the last N hours.
+
+    Read from `messages` rather than inferred from status counts, so the report
+    can say "8 openers, 4 follow-ups" instead of just "12 sent".
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    conn = connect()
+    out = conn.execute(
+        "SELECT step, COUNT(*) AS n FROM messages "
+        "WHERE direction='out' AND created_at >= ? GROUP BY step", (cutoff,),
+    ).fetchall()
+    inbound = conn.execute(
+        "SELECT COUNT(*) FROM messages WHERE direction='in' AND created_at >= ?",
+        (cutoff,),
+    ).fetchone()[0]
+    promoted = conn.execute(
+        "SELECT COUNT(*) FROM candidates WHERE promoted_at >= ?", (cutoff,),
+    ).fetchone()[0]
+    found = conn.execute(
+        "SELECT COUNT(*) FROM candidates WHERE created_at >= ?", (cutoff,),
+    ).fetchone()[0]
+    conn.close()
+
+    by_step = {row["step"]: row["n"] for row in out}
+    return {
+        "openers": by_step.get(1, 0),
+        "followups": sum(n for step, n in by_step.items() if step and step > 1),
+        # Re-touches are logged with step NULL.
+        "retouches": by_step.get(None, 0),
+        "total_sent": sum(by_step.values()),
+        "replies_in": inbound,
+        "promoted": promoted,
+        "channels_found": found,
+    }
+
+
+def status_snapshot():
+    """The handful of numbers worth diffing day over day."""
+    counts = {row["status"]: row["n"] for row in counts_by_status()}
+    discovery = discovery_progress()
+    return {
+        "in_sequence": counts.get("active", 0) + counts.get("queued", 0),
+        "awaiting_reply": len(unresolved_review()),
+        "needing_address": candidates_waiting_count(),
+        "channels_tracked": discovery["candidates"],
+        "unsubscribed": counts.get("unsubscribed", 0),
+        "parked": counts.get("parked", 0),
+    }
+
+
 def prep_progress():
     """How far the sheet-imported prospects are through preparation.
 
