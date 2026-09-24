@@ -299,3 +299,62 @@ def test_digest_message_ids_do_not_grow_without_bound(env, monkeypatch):
     for i in range(30):
         db.record_digest_thread("thread-1", f"msg-{i}")
     assert len(db.digest_message_ids()) <= 20
+
+
+# --- not re-sending the same confirmation three times a day ------------------
+def test_a_reply_is_only_handled_once(env, monkeypatch):
+    # digest-replies runs 3x per weekday. Without this, one unmatched line
+    # became three confirmation emails a day, indefinitely.
+    db, engine, _ = env
+    growing(db, "UC1", "SammyGames", 80_000)
+    fake = FakeGmail(inbound="SammyGames: sammy@business.com")
+    monkeypatch.setattr(engine, "gmail_client", fake)
+    db.record_digest_thread("thread-1")
+
+    assert engine.process_digest_replies() == 1
+    before = len(fake.sent)
+    assert engine.process_digest_replies() == 0      # second run: nothing
+    assert engine.process_digest_replies() == 0      # third run: nothing
+    assert len(fake.sent) == before                  # and no extra emails
+
+
+def test_a_new_reply_is_still_handled(env, monkeypatch):
+    db, engine, _ = env
+    growing(db, "UC1", "SammyGames", 80_000)
+    growing(db, "UC2", "BloxKing", 90_000)
+    fake = FakeGmail(inbound="SammyGames: sammy@business.com")
+    monkeypatch.setattr(engine, "gmail_client", fake)
+    db.record_digest_thread("thread-1")
+    engine.process_digest_replies()
+
+    # A genuinely new reply arrives (different message id).
+    fake._inbound = "BloxKing: contact@bloxking.tv"
+    fake.latest_in_thread = lambda t, x=(): (fake._inbound, "<in-id-2>")
+    assert engine.process_digest_replies() == 1
+
+
+# --- channel links get a useful answer, not "couldn't read this" -------------
+def test_a_channel_link_is_reported_as_a_link(env, monkeypatch):
+    db, engine, _ = env
+    growing(db, "UC1", "SammyGames", 80_000)
+    fake = FakeGmail(inbound="https://www.youtube.com/@SammyGames")
+    monkeypatch.setattr(engine, "gmail_client", fake)
+    db.record_digest_thread("thread-1")
+
+    engine.process_digest_replies()
+    body = fake.sent[-1]["body"]
+    assert "channel links" in body
+    assert "isn't public" in body
+
+
+def test_a_link_is_not_silently_dropped(env):
+    _, engine, _ = env
+    pairs, unparsed = engine._parse_digest_reply("https://youtube.com/@SammyGames")
+    assert pairs == []
+    assert unparsed == ["https://youtube.com/@SammyGames"]
+
+
+def test_prose_is_still_not_reported(env):
+    _, engine, _ = env
+    pairs, unparsed = engine._parse_digest_reply("here you go, thanks")
+    assert pairs == [] and unparsed == []

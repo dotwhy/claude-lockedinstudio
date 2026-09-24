@@ -3,6 +3,7 @@
   process_replies() -> read replies, classify, act (drop / suppress / flag)
   send_digest()-> email YOU a summary of replies that need attention
 """
+import re
 from datetime import datetime, timezone, timedelta
 
 import config
@@ -167,6 +168,10 @@ def send_digest():
 # contacted.
 DIGEST_SUBJECT = "Outreach: channels that need an email"
 
+# A reply line carrying a URL is the common mistake: channel links don't help,
+# because a channel is on this list precisely because its address isn't public.
+_LOOKS_LIKE_LINK = re.compile(r"https?://|www\.|youtube\.com|youtu\.be", re.I)
+
 _DIGEST_HELP = (
     "Reply to this email with one channel per line, like:\n\n"
     "  SammyGames: sammy@business.com\n"
@@ -223,10 +228,11 @@ def _parse_digest_reply(text):
             continue  # quoted original, or the digest's own bullet list
         address = emails.clean(line)
         if not address:
-            # Only complain about lines that look like an attempt — a line with
-            # an "@" but no valid address is a typo worth reporting; prose
-            # isn't.
-            if "@" in line:
+            # Complain about lines that look like an attempt: a typo'd address,
+            # or a channel link sent instead of an address. Plain prose isn't
+            # worth reporting — flagging "thanks!" would train you to ignore
+            # the confirmation entirely.
+            if "@" in line or _LOOKS_LIKE_LINK.search(line):
                 unparsed.append(line)
             continue
         name = line.replace(address, "", 1)
@@ -249,9 +255,16 @@ def process_digest_replies():
 
     # NOT latest_inbound: the digest is self-to-self, so your reply is "from
     # us" and that function would skip it. Exclude our own messages by id.
-    text, _ = gmail_client.latest_in_thread(thread_id, db.digest_message_ids())
+    text, message_id = gmail_client.latest_in_thread(thread_id, db.digest_message_ids())
     if not text:
         print("No reply to the digest yet.")
+        return 0
+
+    # This job runs three times a weekday. Without remembering what it already
+    # read, every run re-parses the SAME reply and sends another confirmation —
+    # so one unmatched line becomes three emails a day, indefinitely.
+    if message_id and message_id == db.get_meta("digest_reply_handled"):
+        print("Already handled this reply. Nothing new.")
         return 0
 
     pairs, unparsed = _parse_digest_reply(text)
@@ -268,6 +281,11 @@ def process_digest_replies():
     for candidate in db.candidates_to_promote():
         if db.promote_candidate(candidate):
             promoted += 1
+
+    # Mark handled BEFORE confirming, so a failure while sending the
+    # confirmation can't cause the whole reply to be reprocessed next run.
+    if message_id:
+        db.set_meta("digest_reply_handled", message_id)
 
     _confirm_digest_reply(thread_id, matched, unmatched, unparsed, promoted)
     print(f"Digest reply: {len(matched)} matched, "
@@ -290,8 +308,18 @@ def _confirm_digest_reply(thread_id, matched, unmatched, unparsed, promoted):
                      "(check the spelling against the digest):")
         lines += [f"  ? {u}" for u in unmatched]
     if unparsed:
-        lines.append("\nI couldn't read these lines:")
-        lines += [f"  ! {u}" for u in unparsed]
+        # A line carrying a link but no address is the common mistake, and it
+        # deserves a specific answer rather than "couldn't read this".
+        links_only = [u for u in unparsed if _LOOKS_LIKE_LINK.search(u)]
+        others = [u for u in unparsed if u not in links_only]
+        if links_only:
+            lines.append("\nThese are channel links, but what I need is an email "
+                         "address. Those channels are on the list precisely "
+                         "because their address isn't public anywhere I can read:")
+            lines += [f"  ! {u}" for u in links_only]
+        if others:
+            lines.append("\nI couldn't read these lines:")
+            lines += [f"  ! {u}" for u in others]
         lines.append("\nFormat is  ChannelName: email@host")
     if not lines:
         lines.append("I couldn't find any addresses in that reply.\n\n" + _DIGEST_HELP)
